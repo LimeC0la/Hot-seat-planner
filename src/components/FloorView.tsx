@@ -23,16 +23,19 @@ export function FloorView({ state, viewMode, onAssign, onBreak }: FloorViewProps
             <h2 className="text-xl font-bold text-slate-200">{zone.name}</h2>
           </div>
           
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-            {zoneMachines.map(machine => (
-              <MachineCard
-                key={machine.id}
-                machine={machine}
-                currentOperator={state.operators.find(o => o.id === machine.currentOperatorId)}
-                onAssign={onAssign}
-                onBreak={onBreak}
-              />
-            ))}
+          <div className="grid gap-4">
+            {zoneMachines.map(machine => {
+              const assignment = state.assignments?.find(a => a.machineId === machine.id);
+              const operator = assignment ? state.operators.find(o => o.id === assignment.operatorId) : null;
+              return (
+                <TimelineBar
+                  key={machine.id}
+                  startTime={assignment?.startTime ?? ''}
+                  endTime={assignment?.endTime ?? ''}
+                  label={operator?.name ?? 'Unassigned'}
+                />
+              );
+            })}
             {zoneMachines.length === 0 && (
               <div className="text-slate-500 text-sm col-span-full">No machines in this zone.</div>
             )}
@@ -51,16 +54,19 @@ export function FloorView({ state, viewMode, onAssign, onBreak }: FloorViewProps
       return (
         <div key={type} className="mb-8 rounded-2xl border border-slate-800 bg-slate-900/30 p-6">
           <h2 className="text-xl font-bold text-slate-200 mb-6">{type}s</h2>
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-            {typeMachines.map(machine => (
-              <MachineCard
-                key={machine.id}
-                machine={machine}
-                currentOperator={state.operators.find(o => o.id === machine.currentOperatorId)}
-                onAssign={onAssign}
-                onBreak={onBreak}
-              />
-            ))}
+          <div className="grid gap-4">
+            {typeMachines.map(machine => {
+              const assignment = state.assignments?.find(a => a.machineId === machine.id);
+              const operator = assignment ? state.operators.find(o => o.id === assignment.operatorId) : null;
+              return (
+                <TimelineBar
+                  key={machine.id}
+                  startTime={assignment?.startTime ?? ''}
+                  endTime={assignment?.endTime ?? ''}
+                  label={operator?.name ?? 'Unassigned'}
+                />
+              );
+            })}
           </div>
         </div>
       );

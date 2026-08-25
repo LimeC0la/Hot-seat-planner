@@ -27,11 +27,29 @@ export interface Zone {
   hasActiveBlast: boolean;
 }
 
+// New interfaces for scheduling
+export interface Assignment {
+  id: string;
+  operatorId: string;
+  machineId: string;
+  startTime: string; // ISO timestamp
+  endTime: string;   // ISO timestamp
+}
+
+export interface Break {
+  id: string;
+  operatorId: string;
+  startTime: string; // ISO timestamp
+  endTime: string;   // ISO timestamp
+}
+
 export interface AppState {
   operators: Operator[];
   machines: Machine[];
   zones: Zone[];
+  assignments: Assignment[];
+  breaks: Break[];
   simulatedTime: string; // ISO string to simulate dashboard time
 }
 
-export type ViewMode = 'zone' | 'equipment';
+export type ViewMode = 'zone' | 'equipment' | 'operators';
