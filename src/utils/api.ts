@@ -40,3 +40,57 @@ export const toggleBlast = async (zoneId: string, active: boolean): Promise<AppS
   const data = await res.json();
   return data.state;
 };
+
+export const addOperator = async (name: string, qualifications: string[]): Promise<AppState> => {
+  const res = await fetch('/api/operators', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name, qualifications }),
+  });
+  if (!res.ok) throw new Error('Failed to add operator');
+  const data = await res.json();
+  return data.state;
+};
+
+export const deleteOperator = async (id: string): Promise<AppState> => {
+  const res = await fetch(`/api/operators/${id}`, { method: 'DELETE' });
+  if (!res.ok) throw new Error('Failed to delete operator');
+  const data = await res.json();
+  return data.state;
+};
+
+export const addMachine = async (name: string, type: string, zoneId: string, transitTimeMinutes: number): Promise<AppState> => {
+  const res = await fetch('/api/machines', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name, type, zoneId, transitTimeMinutes }),
+  });
+  if (!res.ok) throw new Error('Failed to add machine');
+  const data = await res.json();
+  return data.state;
+};
+
+export const deleteMachine = async (id: string): Promise<AppState> => {
+  const res = await fetch(`/api/machines/${id}`, { method: 'DELETE' });
+  if (!res.ok) throw new Error('Failed to delete machine');
+  const data = await res.json();
+  return data.state;
+};
+
+export const addZone = async (name: string): Promise<AppState> => {
+  const res = await fetch('/api/zones', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name }),
+  });
+  if (!res.ok) throw new Error('Failed to add zone');
+  const data = await res.json();
+  return data.state;
+};
+
+export const deleteZone = async (id: string): Promise<AppState> => {
+  const res = await fetch(`/api/zones/${id}`, { method: 'DELETE' });
+  if (!res.ok) throw new Error('Failed to delete zone');
+  const data = await res.json();
+  return data.state;
+};

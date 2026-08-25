@@ -1,6 +1,5 @@
 import { AppState, ViewMode } from '../types';
 import { MachineCard } from './MachineCard';
-import { Flame } from 'lucide-react';
 import { cn } from './ATBQueue';
 
 interface FloorViewProps {
@@ -8,10 +7,9 @@ interface FloorViewProps {
   viewMode: ViewMode;
   onAssign: (operatorId: string, machineId: string) => void;
   onBreak: (operatorId: string) => void;
-  onToggleBlast: (zoneId: string, active: boolean) => void;
 }
 
-export function FloorView({ state, viewMode, onAssign, onBreak, onToggleBlast }: FloorViewProps) {
+export function FloorView({ state, viewMode, onAssign, onBreak }: FloorViewProps) {
   const renderZoneView = () => {
     return state.zones.map(zone => {
       const zoneMachines = state.machines.filter(m => m.zoneId === zone.id);
@@ -23,18 +21,6 @@ export function FloorView({ state, viewMode, onAssign, onBreak, onToggleBlast }:
         )}>
           <div className="flex justify-between items-center mb-6">
             <h2 className="text-xl font-bold text-slate-200">{zone.name}</h2>
-            <button
-              onClick={() => onToggleBlast(zone.id, !zone.hasActiveBlast)}
-              className={cn(
-                "flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors",
-                zone.hasActiveBlast 
-                  ? "bg-red-500/20 text-red-400 hover:bg-red-500/30"
-                  : "bg-slate-800 text-slate-400 hover:bg-slate-700"
-              )}
-            >
-              <Flame className="w-4 h-4" />
-              {zone.hasActiveBlast ? "Active Blast" : "Toggle Blast"}
-            </button>
           </div>
           
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">

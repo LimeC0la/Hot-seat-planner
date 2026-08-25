@@ -1,15 +1,17 @@
 import { useEffect, useState } from 'react';
 import { AppState, ViewMode } from './types';
-import { fetchState, assignOperator, sendOnBreak, toggleBlast } from './utils/api';
+import { fetchState, assignOperator, sendOnBreak, toggleBlast, addOperator, deleteOperator, addMachine, deleteMachine, addZone, deleteZone } from './utils/api';
 import { ATBQueue } from './components/ATBQueue';
 import { FloorView } from './components/FloorView';
-import { LayoutGrid, Map, Loader2, HardHat } from 'lucide-react';
+import { LayoutGrid, Map, Loader2, HardHat, Settings } from 'lucide-react';
 import { cn } from './components/ATBQueue';
+import { SettingsModal } from './components/SettingsModal';
 
 export default function App() {
   const [state, setState] = useState<AppState | null>(null);
   const [viewMode, setViewMode] = useState<ViewMode>('zone');
   const [error, setError] = useState<string | null>(null);
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
 
   const loadState = async () => {
     try {
@@ -50,16 +52,6 @@ export default function App() {
     }
   };
 
-  const handleToggleBlast = async (zoneId: string, active: boolean) => {
-    try {
-      const newState = await toggleBlast(zoneId, active);
-      setState(newState);
-    } catch (err: any) {
-      setError(err.message);
-      setTimeout(() => setError(null), 3000);
-    }
-  };
-
   if (!state) {
     return (
       <div className="min-h-screen bg-slate-950 flex items-center justify-center text-amber-500">
@@ -76,7 +68,7 @@ export default function App() {
           <HardHat className="w-6 h-6" />
           <h1 className="text-xl font-bold tracking-wide">ReliefScheduler</h1>
           <span className="ml-4 px-2 py-0.5 bg-slate-800 rounded text-xs text-slate-400 border border-slate-700">
-            Shift: 06:40 - 19:30
+            {new Date().getHours() >= 7 && new Date().getHours() < 19 ? "Day Shift: 07:00 - 19:00" : "Night Shift: 19:00 - 07:00"}
           </span>
         </div>
 
@@ -108,6 +100,13 @@ export default function App() {
               Equipment View
             </button>
           </div>
+          <button 
+            onClick={() => setIsSettingsOpen(true)}
+            className="p-2 ml-2 bg-slate-800 text-slate-400 hover:text-slate-100 rounded-lg border border-slate-700 transition-colors"
+            title="Settings"
+          >
+            <Settings className="w-5 h-5" />
+          </button>
         </div>
       </header>
 
@@ -119,9 +118,22 @@ export default function App() {
           viewMode={viewMode}
           onAssign={handleAssign}
           onBreak={handleBreak}
-          onToggleBlast={handleToggleBlast}
         />
       </main>
+
+      {isSettingsOpen && (
+        <SettingsModal 
+          state={state}
+          onClose={() => setIsSettingsOpen(false)}
+          onUpdateState={setState}
+          onAddOperator={addOperator}
+          onDeleteOperator={deleteOperator}
+          onAddMachine={addMachine}
+          onDeleteMachine={deleteMachine}
+          onAddZone={addZone}
+          onDeleteZone={deleteZone}
+        />
+      )}
     </div>
   );
 }

@@ -151,6 +151,86 @@ async function startServer() {
     res.json({ success: true, state });
   });
 
+  app.post('/api/operators', (req, res) => {
+    const { name, qualifications } = req.body;
+    const newOp: Operator = {
+      id: `o${Date.now()}`,
+      name,
+      qualifications,
+      status: 'standby',
+      standbyTimeMinutes: 0,
+      breaksTaken: 0,
+      currentAssignmentId: null
+    };
+    state.operators.push(newOp);
+    res.json({ success: true, state });
+  });
+
+  app.delete('/api/operators/:id', (req, res) => {
+    const op = state.operators.find(o => o.id === req.params.id);
+    if (op && op.currentAssignmentId) {
+      const machine = state.machines.find(m => m.id === op.currentAssignmentId);
+      if (machine) machine.currentOperatorId = null;
+    }
+    state.operators = state.operators.filter(o => o.id !== req.params.id);
+    res.json({ success: true, state });
+  });
+
+  app.post('/api/machines', (req, res) => {
+    const { name, type, zoneId, transitTimeMinutes } = req.body;
+    const newMachine: Machine = {
+      id: `m${Date.now()}`,
+      name,
+      type,
+      zoneId,
+      transitTimeMinutes,
+      currentOperatorId: null,
+      status: 'operational'
+    };
+    state.machines.push(newMachine);
+    res.json({ success: true, state });
+  });
+
+  app.delete('/api/machines/:id', (req, res) => {
+    const machine = state.machines.find(m => m.id === req.params.id);
+    if (machine && machine.currentOperatorId) {
+      const op = state.operators.find(o => o.id === machine.currentOperatorId);
+      if (op) {
+        op.status = 'standby';
+        op.currentAssignmentId = null;
+      }
+    }
+    state.machines = state.machines.filter(m => m.id !== req.params.id);
+    res.json({ success: true, state });
+  });
+
+  app.post('/api/zones', (req, res) => {
+    const { name } = req.body;
+    const newZone: Zone = {
+      id: `z${Date.now()}`,
+      name,
+      hasActiveBlast: false
+    };
+    state.zones.push(newZone);
+    res.json({ success: true, state });
+  });
+
+  app.delete('/api/zones/:id', (req, res) => {
+    const machinesToDelete = state.machines.filter(m => m.zoneId === req.params.id);
+    machinesToDelete.forEach(m => {
+       if (m.currentOperatorId) {
+          const op = state.operators.find(o => o.id === m.currentOperatorId);
+          if (op) {
+            op.status = 'standby';
+            op.currentAssignmentId = null;
+          }
+       }
+    });
+    state.machines = state.machines.filter(m => m.zoneId !== req.params.id);
+    state.zones = state.zones.filter(z => z.id !== req.params.id);
+    res.json({ success: true, state });
+  });
+
   // Vite middleware for development
   if (process.env.NODE_ENV !== "production") {
     const vite = await createViteServer({
