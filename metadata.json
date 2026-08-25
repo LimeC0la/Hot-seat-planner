@@ -1,0 +1,6 @@
+{
+  "name": "Hot Seating Break Scheduler",
+  "description": "Dashboard for managing continuous heavy machinery operation and relief operator schedules.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
