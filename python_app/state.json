@@ -1,0 +1,652 @@
+{
+  "operators": [
+    {
+      "name": "Alice Smith",
+      "qualifications": [
+        "Truck",
+        "Water Cart"
+      ],
+      "id": "Alice Smith",
+      "status": "working",
+      "standbyTimeMinutes": 0,
+      "breaksTaken": 0,
+      "currentAssignmentId": "WC-701"
+    },
+    {
+      "name": "Bob Jones",
+      "qualifications": [
+        "Digger",
+        "Truck",
+        "ROM Loader"
+      ],
+      "id": "Bob Jones",
+      "status": "working",
+      "standbyTimeMinutes": 0,
+      "breaksTaken": 0,
+      "currentAssignmentId": "EX-122"
+    },
+    {
+      "name": "Charlie Davis",
+      "qualifications": [
+        "Truck",
+        "Digger"
+      ],
+      "id": "Charlie Davis",
+      "status": "absent",
+      "standbyTimeMinutes": 0,
+      "breaksTaken": 0,
+      "currentAssignmentId": null
+    },
+    {
+      "name": "Diana Prince",
+      "qualifications": [
+        "Truck"
+      ],
+      "id": "Diana Prince",
+      "status": "working",
+      "standbyTimeMinutes": 0,
+      "breaksTaken": 0,
+      "currentAssignmentId": "DT-235"
+    },
+    {
+      "name": "Benjamin Lewis",
+      "qualifications": [
+        "Digger",
+        "Truck",
+        "Dozer"
+      ],
+      "id": "Benjamin Lewis",
+      "status": "working",
+      "standbyTimeMinutes": 0,
+      "breaksTaken": 0,
+      "currentAssignmentId": "EX-121"
+    },
+    {
+      "name": "Alexander Lopez",
+      "qualifications": [
+        "Digger",
+        "Truck"
+      ],
+      "id": "Alexander Lopez",
+      "status": "working",
+      "standbyTimeMinutes": 0,
+      "breaksTaken": 0,
+      "currentAssignmentId": "EX-123"
+    },
+    {
+      "name": "James Taylor",
+      "qualifications": [
+        "Truck",
+        "Water Cart"
+      ],
+      "id": "James Taylor",
+      "status": "working",
+      "standbyTimeMinutes": 0,
+      "breaksTaken": 0,
+      "currentAssignmentId": "WC-712"
+    },
+    {
+      "name": "Olivia Martinez",
+      "qualifications": [
+        "Truck",
+        "ROM Loader",
+        "Dozer"
+      ],
+      "id": "Olivia Martinez",
+      "status": "working",
+      "standbyTimeMinutes": 0,
+      "breaksTaken": 0,
+      "currentAssignmentId": "LD-512"
+    },
+    {
+      "name": "Noah Perez",
+      "qualifications": [
+        "Dozer",
+        "Truck"
+      ],
+      "id": "Noah Perez",
+      "status": "working",
+      "standbyTimeMinutes": 0,
+      "breaksTaken": 0,
+      "currentAssignmentId": "DZ-405"
+    },
+    {
+      "name": "Benjamin Lopez",
+      "qualifications": [
+        "Truck",
+        "Dozer",
+        "Grader"
+      ],
+      "id": "Benjamin Lopez",
+      "status": "working",
+      "standbyTimeMinutes": 0,
+      "breaksTaken": 0,
+      "currentAssignmentId": "DZ-408"
+    },
+    {
+      "name": "Henry Anderson",
+      "qualifications": [
+        "Truck"
+      ],
+      "id": "Henry Anderson",
+      "status": "absent",
+      "standbyTimeMinutes": 0,
+      "breaksTaken": 0,
+      "currentAssignmentId": null
+    },
+    {
+      "name": "Benjamin Thompson",
+      "qualifications": [
+        "Truck",
+        "ROM Loader"
+      ],
+      "id": "Benjamin Thompson",
+      "status": "absent",
+      "standbyTimeMinutes": 0,
+      "breaksTaken": 0,
+      "currentAssignmentId": null
+    },
+    {
+      "name": "Emma Hernandez",
+      "qualifications": [
+        "Truck"
+      ],
+      "id": "Emma Hernandez",
+      "status": "absent",
+      "standbyTimeMinutes": 0,
+      "breaksTaken": 0,
+      "currentAssignmentId": null
+    },
+    {
+      "name": "William Sanchez",
+      "qualifications": [
+        "Dozer",
+        "Truck"
+      ],
+      "id": "William Sanchez",
+      "status": "working",
+      "standbyTimeMinutes": 0,
+      "breaksTaken": 0,
+      "currentAssignmentId": "DZ-410"
+    },
+    {
+      "name": "Isabella Rodriguez",
+      "qualifications": [
+        "Digger",
+        "Truck",
+        "ROM Loader",
+        "Water Cart"
+      ],
+      "id": "Isabella Rodriguez",
+      "status": "working",
+      "standbyTimeMinutes": 0,
+      "breaksTaken": 0,
+      "currentAssignmentId": "LD-513"
+    },
+    {
+      "name": "Elijah Ramirez",
+      "qualifications": [
+        "Truck",
+        "Dozer"
+      ],
+      "id": "Elijah Ramirez",
+      "status": "working",
+      "standbyTimeMinutes": 0,
+      "breaksTaken": 0,
+      "currentAssignmentId": "DT-236"
+    },
+    {
+      "name": "William Williams",
+      "qualifications": [
+        "Truck",
+        "Water Cart"
+      ],
+      "id": "William Williams",
+      "status": "working",
+      "standbyTimeMinutes": 0,
+      "breaksTaken": 0,
+      "currentAssignmentId": "DT-237"
+    },
+    {
+      "name": "William Brown",
+      "qualifications": [
+        "Truck"
+      ],
+      "id": "William Brown",
+      "status": "working",
+      "standbyTimeMinutes": 0,
+      "breaksTaken": 0,
+      "currentAssignmentId": "DT-238"
+    },
+    {
+      "name": "Oliver Robinson",
+      "qualifications": [
+        "Truck",
+        "Grader"
+      ],
+      "id": "Oliver Robinson",
+      "status": "working",
+      "standbyTimeMinutes": 0,
+      "breaksTaken": 0,
+      "currentAssignmentId": "DT-239"
+    },
+    {
+      "name": "William Robinson",
+      "qualifications": [
+        "Truck",
+        "Grader"
+      ],
+      "id": "William Robinson",
+      "status": "working",
+      "standbyTimeMinutes": 0,
+      "breaksTaken": 0,
+      "currentAssignmentId": "DT-240"
+    },
+    {
+      "name": "Jack Lewis",
+      "qualifications": [
+        "Truck",
+        "Grader"
+      ],
+      "id": "Jack Lewis",
+      "status": "absent",
+      "standbyTimeMinutes": 0,
+      "breaksTaken": 0,
+      "currentAssignmentId": null
+    },
+    {
+      "name": "Sophia Robinson",
+      "qualifications": [
+        "Truck",
+        "ROM Loader"
+      ],
+      "id": "Sophia Robinson",
+      "status": "working",
+      "standbyTimeMinutes": 0,
+      "breaksTaken": 0,
+      "currentAssignmentId": "DT-241"
+    },
+    {
+      "name": "Samuel Perez",
+      "qualifications": [
+        "Truck",
+        "ROM Loader",
+        "Grader"
+      ],
+      "id": "Samuel Perez",
+      "status": "standby",
+      "standbyTimeMinutes": 0,
+      "breaksTaken": 0,
+      "currentAssignmentId": null
+    },
+    {
+      "name": "Mateo Martinez",
+      "qualifications": [
+        "Digger",
+        "Truck"
+      ],
+      "id": "Mateo Martinez",
+      "status": "standby",
+      "standbyTimeMinutes": 0,
+      "breaksTaken": 0,
+      "currentAssignmentId": null
+    }
+  ],
+  "machines": [
+    {
+      "name": "DT-235",
+      "type": "Truck",
+      "id": "DT-235",
+      "zoneId": "",
+      "transitTimeMinutes": 0,
+      "currentOperatorId": "Diana Prince",
+      "status": "operational"
+    },
+    {
+      "name": "DT-236",
+      "type": "Truck",
+      "id": "DT-236",
+      "zoneId": "",
+      "transitTimeMinutes": 0,
+      "currentOperatorId": "Elijah Ramirez",
+      "status": "operational"
+    },
+    {
+      "name": "EX-121",
+      "type": "Digger",
+      "id": "EX-121",
+      "zoneId": "IM9",
+      "transitTimeMinutes": 0,
+      "currentOperatorId": "Benjamin Lewis",
+      "status": "operational"
+    },
+    {
+      "name": "EX-122",
+      "type": "Digger",
+      "id": "EX-122",
+      "zoneId": "IM9",
+      "transitTimeMinutes": 0,
+      "currentOperatorId": "Bob Jones",
+      "status": "operational"
+    },
+    {
+      "name": "EX-123",
+      "type": "Digger",
+      "id": "EX-123",
+      "zoneId": "IM9",
+      "transitTimeMinutes": 0,
+      "currentOperatorId": "Alexander Lopez",
+      "status": "operational"
+    },
+    {
+      "name": "DT-237",
+      "type": "Truck",
+      "id": "DT-237",
+      "zoneId": "",
+      "transitTimeMinutes": 0,
+      "currentOperatorId": "William Williams",
+      "status": "operational"
+    },
+    {
+      "name": "DT-238",
+      "type": "Truck",
+      "id": "DT-238",
+      "zoneId": "",
+      "transitTimeMinutes": 0,
+      "currentOperatorId": "William Brown",
+      "status": "operational"
+    },
+    {
+      "name": "DT-239",
+      "type": "Truck",
+      "id": "DT-239",
+      "zoneId": "",
+      "transitTimeMinutes": 0,
+      "currentOperatorId": "Oliver Robinson",
+      "status": "operational"
+    },
+    {
+      "name": "DT-240",
+      "type": "Truck",
+      "id": "DT-240",
+      "zoneId": "",
+      "transitTimeMinutes": 0,
+      "currentOperatorId": "William Robinson",
+      "status": "operational"
+    },
+    {
+      "name": "DT-241",
+      "type": "Truck",
+      "id": "DT-241",
+      "zoneId": "",
+      "transitTimeMinutes": 0,
+      "currentOperatorId": "Sophia Robinson",
+      "status": "operational"
+    },
+    {
+      "name": "LD-512",
+      "type": "ROM Loader",
+      "id": "LD-512",
+      "zoneId": "ROM Pad",
+      "transitTimeMinutes": 0,
+      "currentOperatorId": "Olivia Martinez",
+      "status": "operational"
+    },
+    {
+      "name": "LD-513",
+      "type": "ROM Loader",
+      "id": "LD-513",
+      "zoneId": "ROM Pad",
+      "transitTimeMinutes": 0,
+      "currentOperatorId": "Isabella Rodriguez",
+      "status": "operational"
+    },
+    {
+      "name": "WC-701",
+      "type": "Water Cart",
+      "id": "WC-701",
+      "zoneId": "CN5",
+      "transitTimeMinutes": 0,
+      "currentOperatorId": "Alice Smith",
+      "status": "operational"
+    },
+    {
+      "name": "WC-711",
+      "type": "Water Cart",
+      "id": "WC-711",
+      "zoneId": "IM8",
+      "transitTimeMinutes": 0,
+      "currentOperatorId": null,
+      "status": "not_required"
+    },
+    {
+      "name": "WC-712",
+      "type": "Water Cart",
+      "id": "WC-712",
+      "zoneId": "IM9",
+      "transitTimeMinutes": 0,
+      "currentOperatorId": "James Taylor",
+      "status": "operational"
+    },
+    {
+      "name": "DZ-404",
+      "type": "Dozer",
+      "id": "DZ-404",
+      "zoneId": "IM8",
+      "transitTimeMinutes": 0,
+      "currentOperatorId": null,
+      "status": "not_required"
+    },
+    {
+      "name": "DZ-405",
+      "type": "Dozer",
+      "id": "DZ-405",
+      "zoneId": "IM9",
+      "transitTimeMinutes": 0,
+      "currentOperatorId": "Noah Perez",
+      "status": "operational"
+    },
+    {
+      "name": "DZ-408",
+      "type": "Dozer",
+      "id": "DZ-408",
+      "zoneId": "CN5",
+      "transitTimeMinutes": 0,
+      "currentOperatorId": "Benjamin Lopez",
+      "status": "operational"
+    },
+    {
+      "name": "DZ-410",
+      "type": "Dozer",
+      "id": "DZ-410",
+      "zoneId": "ROM Pad",
+      "transitTimeMinutes": 0,
+      "currentOperatorId": "William Sanchez",
+      "status": "operational"
+    },
+    {
+      "name": "GD-313",
+      "type": "Grader",
+      "id": "GD-313",
+      "zoneId": "IM9",
+      "transitTimeMinutes": 0,
+      "currentOperatorId": null,
+      "status": "operational"
+    },
+    {
+      "name": "GD-315",
+      "type": "Grader",
+      "id": "GD-315",
+      "zoneId": "CN5",
+      "transitTimeMinutes": 0,
+      "currentOperatorId": null,
+      "status": "operational"
+    },
+    {
+      "name": "GD316",
+      "type": "Grader",
+      "id": "GD316",
+      "zoneId": "IM8",
+      "transitTimeMinutes": 0,
+      "currentOperatorId": null,
+      "status": "not_required"
+    }
+  ],
+  "zones": [
+    {
+      "name": "IM8",
+      "id": "IM8",
+      "hasActiveBlast": false
+    },
+    {
+      "name": "IM9",
+      "id": "IM9",
+      "hasActiveBlast": false
+    },
+    {
+      "name": "CN5",
+      "id": "CN5",
+      "hasActiveBlast": false
+    },
+    {
+      "name": "ROM Pad",
+      "id": "ROM Pad",
+      "hasActiveBlast": false
+    }
+  ],
+  "assignments": [
+    {
+      "id": "a_1787598000.0_Alice_Smith",
+      "operatorId": "Alice Smith",
+      "machineId": "WC-701",
+      "startTime": "2026-08-25T07:00:00",
+      "endTime": ""
+    },
+    {
+      "id": "a_1787598000.0_Bob_Jones",
+      "operatorId": "Bob Jones",
+      "machineId": "EX-122",
+      "startTime": "2026-08-25T07:00:00",
+      "endTime": ""
+    },
+    {
+      "id": "a_1787598000.0_Diana_Prince",
+      "operatorId": "Diana Prince",
+      "machineId": "DT-235",
+      "startTime": "2026-08-25T07:00:00",
+      "endTime": ""
+    },
+    {
+      "id": "a_1787598000.0_Benjamin_Lewis",
+      "operatorId": "Benjamin Lewis",
+      "machineId": "EX-121",
+      "startTime": "2026-08-25T07:00:00",
+      "endTime": ""
+    },
+    {
+      "id": "a_1787598000.0_Alexander_Lopez",
+      "operatorId": "Alexander Lopez",
+      "machineId": "EX-123",
+      "startTime": "2026-08-25T07:00:00",
+      "endTime": ""
+    },
+    {
+      "id": "a_1787598000.0_James_Taylor",
+      "operatorId": "James Taylor",
+      "machineId": "WC-712",
+      "startTime": "2026-08-25T07:00:00",
+      "endTime": ""
+    },
+    {
+      "id": "a_1787598000.0_Olivia_Martinez",
+      "operatorId": "Olivia Martinez",
+      "machineId": "LD-512",
+      "startTime": "2026-08-25T07:00:00",
+      "endTime": ""
+    },
+    {
+      "id": "a_1787598000.0_Noah_Perez",
+      "operatorId": "Noah Perez",
+      "machineId": "DZ-405",
+      "startTime": "2026-08-25T07:00:00",
+      "endTime": ""
+    },
+    {
+      "id": "a_1787598000.0_Benjamin_Lopez",
+      "operatorId": "Benjamin Lopez",
+      "machineId": "DZ-408",
+      "startTime": "2026-08-25T07:00:00",
+      "endTime": ""
+    },
+    {
+      "id": "a_1787598000.0_William_Sanchez",
+      "operatorId": "William Sanchez",
+      "machineId": "DZ-410",
+      "startTime": "2026-08-25T07:00:00",
+      "endTime": ""
+    },
+    {
+      "id": "a_1787598000.0_Isabella_Rodriguez",
+      "operatorId": "Isabella Rodriguez",
+      "machineId": "LD-513",
+      "startTime": "2026-08-25T07:00:00",
+      "endTime": ""
+    },
+    {
+      "id": "a_1787598000.0_Elijah_Ramirez",
+      "operatorId": "Elijah Ramirez",
+      "machineId": "DT-236",
+      "startTime": "2026-08-25T07:00:00",
+      "endTime": ""
+    },
+    {
+      "id": "a_1787598000.0_William_Williams",
+      "operatorId": "William Williams",
+      "machineId": "DT-237",
+      "startTime": "2026-08-25T07:00:00",
+      "endTime": ""
+    },
+    {
+      "id": "a_1787598000.0_William_Brown",
+      "operatorId": "William Brown",
+      "machineId": "DT-238",
+      "startTime": "2026-08-25T07:00:00",
+      "endTime": ""
+    },
+    {
+      "id": "a_1787598000.0_Oliver_Robinson",
+      "operatorId": "Oliver Robinson",
+      "machineId": "DT-239",
+      "startTime": "2026-08-25T07:00:00",
+      "endTime": ""
+    },
+    {
+      "id": "a_1787598000.0_William_Robinson",
+      "operatorId": "William Robinson",
+      "machineId": "DT-240",
+      "startTime": "2026-08-25T07:00:00",
+      "endTime": ""
+    },
+    {
+      "id": "a_1787598000.0_Sophia_Robinson",
+      "operatorId": "Sophia Robinson",
+      "machineId": "DT-241",
+      "startTime": "2026-08-25T07:00:00",
+      "endTime": ""
+    }
+  ],
+  "breaks": [],
+  "settings": {
+    "durationTimingBuffer": 5,
+    "paddingMinutes": 5,
+    "defaultOperatingTimeMinutes": 60,
+    "breakDurationMinutes": 35,
+    "breakCooldownMinutes": 90,
+    "shiftBreakWindowStartOffsetMinutes": 90,
+    "shiftBreakWindowEndOffsetMinutes": 60,
+    "targetBreaksPerShift": 2,
+    "preferEvenWorkTime": false,
+    "autoPlanEnabled": true
+  },
+  "simulatedTime": "2026-08-25T07:00:00"
+}
