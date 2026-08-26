@@ -1,6 +1,6 @@
 from PySide6.QtWidgets import (
     QMainWindow, QWidget, QHBoxLayout, QVBoxLayout, QTabWidget,
-    QLabel, QPushButton, QFrame
+    QLabel, QPushButton, QFrame, QCheckBox
 )
 from PySide6.QtGui import QPalette, QColor
 from PySide6.QtCore import Qt
@@ -111,6 +111,30 @@ class MainWindow(QMainWindow):
         """)
         self.reset_btn.clicked.connect(self.on_reset_shift)
         sim_layout.addWidget(self.reset_btn)
+        
+        # Auto-Accept Swaps Checkbox
+        self.auto_accept_cb = QCheckBox("⚡ Auto-Accept Swaps")
+        self.auto_accept_cb.setToolTip("Automatically execute planned breaks and relief swaps when scheduled time arrives")
+        self.auto_accept_cb.setStyleSheet("""
+            QCheckBox {
+                color: #fde047;
+                font-weight: bold;
+                font-size: 11px;
+                padding: 2px 6px;
+            }
+            QCheckBox::indicator {
+                width: 14px;
+                height: 14px;
+                border-radius: 3px;
+                border: 1px solid #ca8a04;
+                background-color: #0f172a;
+            }
+            QCheckBox::indicator:checked {
+                background-color: #eab308;
+            }
+        """)
+        self.auto_accept_cb.toggled.connect(self.state_manager.set_auto_accept_swaps)
+        sim_layout.addWidget(self.auto_accept_cb)
         
         header_layout.addWidget(sim_controls)
         header_layout.addStretch()

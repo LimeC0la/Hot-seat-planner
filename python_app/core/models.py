@@ -24,6 +24,9 @@ class Machine:
     transitTimeMinutes: int = 0
     currentOperatorId: Optional[str] = None
     status: str = 'operational'  # operational, not_required, maintenance, blast_exclusion
+    priority: int = 3  # For diggers (e.g., 1 is highest priority)
+    requiredTrucks: int = 4  # Average number of trucks this digger requires
+    circuitGroup: str = ""  # Digger name this machine is grouped with
 
     def __post_init__(self):
         if not self.id:
@@ -34,6 +37,8 @@ class Zone:
     name: str
     id: str = ""
     hasActiveBlast: bool = False
+    x: float = 0.0
+    y: float = 0.0
 
     def __post_init__(self):
         if not self.id:
@@ -76,12 +81,20 @@ class Settings:
     autoPlanEnabled: bool = True
 
 @dataclass
+class ZoneConnection:
+    zone_a: str
+    zone_b: str
+    travelTimeMinutes: int
+
+@dataclass
 class AppState:
     operators: List[Operator] = field(default_factory=list)
     machines: List[Machine] = field(default_factory=list)
     zones: List[Zone] = field(default_factory=list)
+    zoneConnections: List[ZoneConnection] = field(default_factory=list)
     assignments: List[Assignment] = field(default_factory=list)
     breaks: List[Break] = field(default_factory=list)
     plannedSegments: List[PlannedSegment] = field(default_factory=list)
     settings: Settings = field(default_factory=Settings)
     simulatedTime: str = ""
+

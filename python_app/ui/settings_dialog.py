@@ -5,8 +5,9 @@ from PySide6.QtWidgets import (
     QComboBox, QScrollArea, QFrame, QGridLayout, QAbstractItemView
 )
 from PySide6.QtCore import Qt
-from typing import List, Optional, Set
-from core.models import Zone, Operator, Machine
+from typing import List, Optional, Set, Tuple
+from core.models import Zone, Operator, Machine, ZoneConnection
+from ui.map_view import LocationsMapTab
 
 STANDARD_EQUIPMENT_TYPES = [
     "Digger",
@@ -427,54 +428,7 @@ class GeneralSettingsTab(QWidget):
         layout.addRow("Auto Planning:", self.auto_plan_cb)
 
 
-class LocationsTab(QWidget):
-    def __init__(self, zones):
-        super().__init__()
-        self.layout = QVBoxLayout(self)
-        
-        self.table = QTableWidget(0, 1)
-        self.table.setHorizontalHeaderLabels(["Location / Pit Name"])
-        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
-        self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
-        self.layout.addWidget(self.table)
-        
-        for z in zones:
-            row = self.table.rowCount()
-            self.table.insertRow(row)
-            self.table.setItem(row, 0, QTableWidgetItem(z.name))
-            
-        btn_layout = QHBoxLayout()
-        add_btn = QPushButton("➕ Add Location")
-        add_btn.clicked.connect(self.add_row)
-        remove_btn = QPushButton("🗑 Remove Selected")
-        remove_btn.setStyleSheet("background-color: #475569;")
-        remove_btn.clicked.connect(self.remove_row)
-        
-        btn_layout.addWidget(add_btn)
-        btn_layout.addWidget(remove_btn)
-        btn_layout.addStretch()
-        
-        self.layout.addLayout(btn_layout)
 
-    def add_row(self):
-        row = self.table.rowCount()
-        self.table.insertRow(row)
-        item = QTableWidgetItem(f"New Location {row + 1}")
-        self.table.setItem(row, 0, item)
-        self.table.editItem(item)
-
-    def remove_row(self):
-        for item in self.table.selectedItems():
-            self.table.removeRow(item.row())
-
-    def get_data(self) -> List[Zone]:
-        zones = []
-        for row in range(self.table.rowCount()):
-            name_item = self.table.item(row, 0)
-            if name_item and name_item.text().strip():
-                name = name_item.text().strip()
-                zones.append(Zone(name=name, id=name))
-        return zones
 
 
 class CrewTab(QWidget):
@@ -505,6 +459,7 @@ class CrewTab(QWidget):
         self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
         self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
         self.table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeToContents)
+        self.table.verticalHeader().setDefaultSectionSize(40)
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers) # Use popup dialog for editing!
         self.table.cellDoubleClicked.connect(self.on_row_double_clicked)
@@ -626,8 +581,9 @@ class MachinesTab(QWidget):
         self.table.setHorizontalHeaderLabels(["Machine Name", "Type", "Location", "Status"])
         self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
         self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
-        self.table.horizontalHeader().setSectionResizeMode(2, QHeaderView.Stretch)
+        self.table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeToContents)
         self.table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeToContents)
+        self.table.verticalHeader().setDefaultSectionSize(40)
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.table.cellDoubleClicked.connect(self.on_row_double_clicked)
@@ -775,7 +731,7 @@ class SettingsDialog(QDialog):
         self.general_tab = GeneralSettingsTab(self.state_manager.state.settings)
         self.crew_tab = CrewTab(self.state_manager.state.operators)
         self.machines_tab = MachinesTab(self.state_manager.state.machines, self.state_manager.state.zones)
-        self.locations_tab = LocationsTab(self.state_manager.state.zones)
+        self.locations_tab = LocationsMapTab(self.state_manager.state.zones, self.state_manager.state.zoneConnections)
         
         self.tabs.addTab(self.general_tab, "⚙ General Shift Rules")
         self.tabs.addTab(self.crew_tab, "👥 Crew & Qualifications")
@@ -809,7 +765,9 @@ class SettingsDialog(QDialog):
         settings.preferEvenWorkTime = self.general_tab.even_work_cb.isChecked()
         settings.autoPlanEnabled = self.general_tab.auto_plan_cb.isChecked()
         
-        self.state_manager.state.zones = self.locations_tab.get_data()
+        zones, connections = self.locations_tab.get_data()
+        self.state_manager.state.zones = zones
+        self.state_manager.state.zoneConnections = connections
         
         # Save crew
         new_ops = self.crew_tab.get_data()

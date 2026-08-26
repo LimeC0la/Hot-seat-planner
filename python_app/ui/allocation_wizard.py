@@ -428,6 +428,40 @@ class EquipmentAssignmentRow(QFrame):
         self.op_combo.currentIndexChanged.connect(self.on_operator_selected)
         layout.addWidget(self.op_combo)
         
+        # New options based on machine type
+        from .allocation_wizard import is_digger
+        
+        self.options_layout = QVBoxLayout()
+        if is_digger(self.machine.type):
+            pri_layout = QHBoxLayout()
+            pri_layout.addWidget(QLabel("Priority:"))
+            self.priority_spin = QSpinBox()
+            self.priority_spin.setRange(1, 10)
+            self.priority_spin.setValue(getattr(self.machine, 'priority', 3))
+            self.priority_spin.setToolTip("1 is Highest Priority")
+            self.priority_spin.valueChanged.connect(self.on_priority_changed)
+            pri_layout.addWidget(self.priority_spin)
+            self.options_layout.addLayout(pri_layout)
+            
+            trk_layout = QHBoxLayout()
+            trk_layout.addWidget(QLabel("Req. Trucks:"))
+            self.trucks_spin = QSpinBox()
+            self.trucks_spin.setRange(0, 20)
+            self.trucks_spin.setValue(getattr(self.machine, 'requiredTrucks', 4))
+            self.trucks_spin.valueChanged.connect(self.on_trucks_changed)
+            trk_layout.addWidget(self.trucks_spin)
+            self.options_layout.addLayout(trk_layout)
+        else:
+            circ_layout = QHBoxLayout()
+            circ_layout.addWidget(QLabel("Circuit:"))
+            self.circuit_combo = QComboBox()
+            self.circuit_combo.addItem("General / Unassigned", "")
+            self.circuit_combo.currentIndexChanged.connect(self.on_circuit_changed)
+            circ_layout.addWidget(self.circuit_combo)
+            self.options_layout.addLayout(circ_layout)
+            
+        layout.addLayout(self.options_layout)
+        
         self.clear_btn = QPushButton("✕")
         self.clear_btn.setToolTip("Clear Operator Assignment")
         self.clear_btn.setFixedSize(28, 28)
@@ -472,6 +506,15 @@ class EquipmentAssignmentRow(QFrame):
                         
             self.wizard.allocations[self.machine.name] = op_name
             self.assignment_changed.emit()
+
+    def on_priority_changed(self, value: int):
+        self.machine.priority = value
+
+    def on_trucks_changed(self, value: int):
+        self.machine.requiredTrucks = value
+
+    def on_circuit_changed(self, index: int):
+        self.machine.circuitGroup = self.circuit_combo.currentData()
 
     def clear_assignment(self):
         self.wizard.allocations[self.machine.name] = None
@@ -544,6 +587,26 @@ class EquipmentAssignmentRow(QFrame):
                 
             self.op_combo.setCurrentIndex(selected_idx)
             self.op_combo.blockSignals(False)
+            
+            from .allocation_wizard import is_digger
+            if hasattr(self, 'circuit_combo') and not is_digger(self.machine.type):
+                self.circuit_combo.blockSignals(True)
+                current_circ = getattr(self.machine, 'circuitGroup', "")
+                self.circuit_combo.clear()
+                self.circuit_combo.addItem("General / Unassigned", "")
+                
+                # Find active diggers
+                active_diggers = [m.name for m in self.wizard.state_manager.state.machines 
+                                  if is_digger(m.type) and m.name not in self.wizard.not_required_machines]
+                
+                sel_idx = 0
+                for i, d_name in enumerate(active_diggers):
+                    self.circuit_combo.addItem(f"🚜 Circuit: {d_name}", d_name)
+                    if d_name == current_circ:
+                        sel_idx = i + 1
+                        
+                self.circuit_combo.setCurrentIndex(sel_idx)
+                self.circuit_combo.blockSignals(False)
 
 
 class EquipmentCategoryStepWidget(QWidget):
@@ -777,7 +840,131 @@ class ReviewStepWidget(QWidget):
         opts_layout.addWidget(self.reset_metrics_cb)
         
         opts_layout.addStretch()
+        
+        self.optimize_btn = QPushButton("✨ Optimize Allocation")
+        self.optimize_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #8b5cf6;
+                color: white;
+                border: 1px solid #7c3aed;
+                border-radius: 6px;
+                padding: 6px 12px;
+                font-weight: bold;
+            }
+            QPushButton:hover { background-color: #7c3aed; }
+        """)
+        self.optimize_btn.clicked.connect(self.run_optimization)
+        opts_layout.addWidget(self.optimize_btn)
+        
         layout.addWidget(opts_frame)
+        
+    def run_optimization(self):
+        wizard = self.wizard
+        all_ops = [op for op in wizard.state_manager.state.operators if op.name not in wizard.absent_operators]
+        total_ops = len(all_ops)
+        
+        settings = wizard.state_manager.state.settings
+        shift_mins = 720
+        break_mins_per_op = settings.targetBreaksPerShift * settings.breakDurationMinutes
+        total_op_mins = total_ops * (shift_mins - break_mins_per_op)
+        
+        all_machines = wizard.state_manager.state.machines
+        current_active_machines = [m for m in all_machines if m.name not in wizard.not_required_machines]
+        diggers = [m for m in current_active_machines if is_digger(m.type)]
+        
+        # Build circuits
+        # circuit_map maps digger_name -> list of machines in its circuit (including the digger itself)
+        circuit_map = {d.name: [d] for d in diggers}
+        general_machines = []
+        
+        for m in current_active_machines:
+            if not is_digger(m.type):
+                c_grp = getattr(m, 'circuitGroup', "")
+                if c_grp and c_grp in circuit_map:
+                    circuit_map[c_grp].append(m)
+                else:
+                    general_machines.append(m)
+                    
+        def calc_score(active_machines_list, deficit_mins):
+            score = 0
+            machine_times = {m.name: shift_mins for m in active_machines_list}
+            if deficit_mins > 0:
+                def get_pri(m):
+                    if is_digger(m.type): return getattr(m, 'priority', 3)
+                    return 5
+                sorted_machines = sorted(active_machines_list, key=lambda m: get_pri(m), reverse=True)
+                rem_def = deficit_mins
+                for m in sorted_machines:
+                    if rem_def <= 0: break
+                    take = min(shift_mins, rem_def)
+                    machine_times[m.name] -= take
+                    rem_def -= take
+                    
+            # Calculate circuit-based score
+            # A circuit's production is limited by the digger's time and number of operating trucks in the circuit
+            for d in [m for m in active_machines_list if is_digger(m.type)]:
+                # count trucks in this digger's circuit
+                d_circuit = circuit_map.get(d.name, [d])
+                active_trucks_in_circuit = sum(1 for tm in d_circuit if is_truck(tm.type) and tm in active_machines_list)
+                
+                # "1 digger with 20 trucks isnt as productive as 3 diggers with 5 trucks"
+                # Diminishing returns on trucks: we can use a modifier or just sqrt(trucks) for demonstration, or cap it at requiredTrucks
+                req = getattr(d, 'requiredTrucks', 4)
+                if req <= 0: req = 1
+                effective_trucks = min(active_trucks_in_circuit, req) + (max(0, active_trucks_in_circuit - req) * 0.2)
+                
+                pri = getattr(d, 'priority', 3)
+                # Score = Operating Time * Effective Trucks * Priority Modifier
+                score += machine_times[d.name] * effective_trucks * (11 - pri)
+            return score
+            
+        required_mins = len(current_active_machines) * shift_mins
+        deficit = required_mins - total_op_mins
+        base_score = calc_score(current_active_machines, max(0, deficit))
+        
+        diggers_sorted = sorted(diggers, key=lambda m: getattr(m, 'priority', 3), reverse=True)
+        
+        best_score = base_score
+        best_parked_machines = []
+        
+        current_test_machines = list(current_active_machines)
+        parked_for_test = []
+        
+        for d in diggers_sorted:
+            # Park the entire circuit
+            for m in circuit_map.get(d.name, []):
+                if m in current_test_machines:
+                    current_test_machines.remove(m)
+                    parked_for_test.append(m.name)
+            
+            req = len(current_test_machines) * shift_mins
+            new_def = max(0, req - total_op_mins)
+            test_score = calc_score(current_test_machines, new_def)
+            
+            if test_score > best_score:
+                best_score = test_score
+                best_parked_machines = list(parked_for_test)
+                
+        msg = f"<h3>Optimization Analysis</h3>"
+        msg += f"Available Operator Time: {total_op_mins} mins (Guarantees {settings.targetBreaksPerShift} breaks/operator)<br>"
+        msg += f"Required Machine Time: {required_mins} mins<br>"
+        msg += f"Current Deficit: {max(0, deficit)} mins<br>"
+        msg += f"Base Scenario Production Score: {base_score:.1f}<br><br>"
+        
+        if best_score > base_score:
+            msg += f"<b>Recommended Action:</b> Park {', '.join(best_parked_machines)} (Low Priority Circuit) to act as Hot Seaters.<br>"
+            msg += f"Predicted Improved Score: {best_score:.1f}<br><br>"
+            msg += "Would you like to apply this recommendation?"
+            reply = QMessageBox.question(self, "Optimization Recommendation", msg, QMessageBox.Yes | QMessageBox.No)
+            if reply == QMessageBox.Yes:
+                for m_name in best_parked_machines:
+                    wizard.not_required_machines.add(m_name)
+                    wizard.allocations[m_name] = None
+                self.refresh_summary()
+        else:
+            msg += "<b>Recommended Action:</b> All machines manned is optimal.<br>"
+            msg += "We have enough hot seaters or parking a digger loses too much production."
+            QMessageBox.information(self, "Optimization Recommendation", msg)
 
     def refresh_summary(self):
         while self.summary_layout.count():

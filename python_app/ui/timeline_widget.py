@@ -1,6 +1,6 @@
 from PySide6.QtWidgets import QWidget
-from PySide6.QtGui import QPainter, QColor, QFont, QBrush, QPen, QPolygonF
-from PySide6.QtCore import Qt, QRectF, QPointF
+from PySide6.QtGui import QPainter, QColor, QFont, QBrush, QPen, QPolygonF, QFontMetrics, QLinearGradient
+from PySide6.QtCore import Qt, QRectF, QPointF, Signal
 from datetime import datetime, timedelta
 
 def get_shift_bounds(now):
@@ -91,12 +91,18 @@ class TimelineTrackWidget(QWidget):
     """
     Compact Gantt track widget (height ~28px) without duplicate hour text labels.
     Aligns pixel-perfect with TimelineRulerWidget above it.
+    Supports interactive confirmation pill attached to the current time needle.
     """
+    swap_confirmed = Signal(str)
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setFixedHeight(28)
         self.segments = []
         self.current_time = None
+        self.pending_swap = None
+        self.pending_swap_rect = None
+        self.setMouseTracking(True)
 
     def set_segments(self, segments, current_time=None):
         self.segments = segments
@@ -106,6 +112,10 @@ class TimelineTrackWidget(QWidget):
 
     def set_current_time(self, current_time):
         self.current_time = current_time
+        self.update()
+
+    def set_pending_swap(self, pending_swap):
+        self.pending_swap = pending_swap
         self.update()
 
     def paintEvent(self, event):
@@ -180,8 +190,10 @@ class TimelineTrackWidget(QWidget):
                 painter.setFont(actual_font if not is_planned else planned_font)
                 painter.drawText(rect, Qt.AlignCenter, s['label'])
                 
-        # 4. Draw Current Time Marker (Red Line & Pointer)
+        # 4. Draw Current Time Marker (Red Line & Pointer) & Pending Swap Confirmation Pill
         current_sec = (now - min_time).total_seconds()
+        self.pending_swap_rect = None
+
         if 0 <= current_sec <= total_duration:
             marker_x = (current_sec / total_duration) * width
             painter.setPen(QPen(QColor("#ef4444"), 2))
@@ -195,8 +207,59 @@ class TimelineTrackWidget(QWidget):
             painter.setBrush(QBrush(QColor("#ef4444")))
             painter.setPen(Qt.NoPen)
             painter.drawPolygon(poly)
+
+            # Draw Pending Swap Confirmation Pill attached to the current time needle
+            if self.pending_swap:
+                swap_label = self.pending_swap.get('label', 'Confirm Swap')
+                pill_font = QFont("Segoe UI", 8, QFont.Bold)
+                painter.setFont(pill_font)
+                fm = QFontMetrics(pill_font)
+                text_w = fm.horizontalAdvance(swap_label)
+                pill_w = max(90.0, float(text_w + 18))
+                pill_h = 22.0
+                pill_y = track_y + (track_h - pill_h) / 2.0
+
+                # Determine pill placement: right of needle by default, left if near right boundary
+                if marker_x + pill_w + 6 <= width:
+                    pill_x = marker_x + 4
+                else:
+                    pill_x = max(2.0, marker_x - pill_w - 4)
+
+                self.pending_swap_rect = QRectF(pill_x, pill_y, pill_w, pill_h)
+
+                # Vibrant glowing background with gradient
+                gradient = QLinearGradient(pill_x, pill_y, pill_x, pill_y + pill_h)
+                gradient.setColorAt(0.0, QColor("#f59e0b")) # Amber 500
+                gradient.setColorAt(1.0, QColor("#d97706")) # Amber 600
+
+                painter.setBrush(QBrush(gradient))
+                painter.setPen(QPen(QColor("#fef08a"), 1.2)) # Yellow 200 highlight border
+                painter.drawRoundedRect(self.pending_swap_rect, 4, 4)
+
+                # Text label
+                painter.setPen(QColor("#ffffff"))
+                painter.drawText(self.pending_swap_rect, Qt.AlignCenter, swap_label)
             
         painter.end()
+
+    def mouseMoveEvent(self, event):
+        if self.pending_swap_rect and self.pending_swap_rect.contains(event.position()):
+            self.setCursor(Qt.PointingHandCursor)
+            if self.pending_swap:
+                self.setToolTip(self.pending_swap.get('tooltip', 'Click to confirm swap'))
+        else:
+            self.setCursor(Qt.ArrowCursor)
+            self.setToolTip("")
+        super().mouseMoveEvent(event)
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton and self.pending_swap_rect and self.pending_swap_rect.contains(event.position()):
+            if self.pending_swap:
+                machine_name = self.pending_swap.get('machine_name', '')
+                self.swap_confirmed.emit(machine_name)
+                event.accept()
+                return
+        super().mousePressEvent(event)
 
 
 class TimelineWidget(QWidget):

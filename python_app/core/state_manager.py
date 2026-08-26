@@ -5,7 +5,7 @@ from datetime import datetime, timedelta
 from PySide6.QtCore import QObject, Signal, QTimer
 from PySide6.QtGui import QColor
 import dateutil.parser
-from .models import Operator, Machine, Zone, Assignment, Break, AppState, Settings, PlannedSegment
+from .models import Operator, Machine, Zone, ZoneConnection, Assignment, Break, AppState, Settings, PlannedSegment
 from .planner import ReliefPlanner, get_shift_bounds
 
 def merge_intervals(intervals):
@@ -54,6 +54,7 @@ class StateManager(QObject):
         self.is_paused = False
         self.speed_multiplier = 1.0  # 1.0 = 1 min/s (60x), 2.0 = 2 min/s, 4.0 = 4 min/s
         self.tick_interval_ms = 500  # 500ms resolution
+        self.auto_accept_swaps = False
         
         self.load_state()
         self.recompute_plan()
@@ -62,6 +63,12 @@ class StateManager(QObject):
         self.timer = QTimer(self)
         self.timer.timeout.connect(self.tick)
         self.timer.start(self.tick_interval_ms)
+
+    def set_auto_accept_swaps(self, enabled: bool):
+        self.auto_accept_swaps = bool(enabled)
+        if self.auto_accept_swaps:
+            # Immediately trigger any due swaps
+            self.check_and_auto_execute_swaps()
 
     def get_current_time(self) -> datetime:
         return self.simulated_time
@@ -118,6 +125,7 @@ class StateManager(QObject):
                 self.state.operators = [Operator(**op) for op in data.get('operators', [])]
                 self.state.machines = [Machine(**m) for m in data.get('machines', [])]
                 self.state.zones = [Zone(**z) for z in data.get('zones', [])]
+                self.state.zoneConnections = [ZoneConnection(**zc) for zc in data.get('zoneConnections', [])]
                 self.state.assignments = [Assignment(**a) for a in data.get('assignments', [])]
                 self.state.breaks = [Break(**b) for b in data.get('breaks', [])]
                 if 'settings' in data:
@@ -202,6 +210,7 @@ class StateManager(QObject):
             'operators': [op.__dict__ for op in self.state.operators],
             'machines': [m.__dict__ for m in self.state.machines],
             'zones': [z.__dict__ for z in self.state.zones],
+            'zoneConnections': [zc.__dict__ for zc in self.state.zoneConnections],
             'assignments': [a.__dict__ for a in self.state.assignments],
             'breaks': [b.__dict__ for b in self.state.breaks],
             'settings': self.state.settings.__dict__,
@@ -235,6 +244,10 @@ class StateManager(QObject):
                             self._end_break(op.name, active_break.id)
                     except Exception:
                         pass
+
+        # Check and auto execute any due swaps if auto-accept is enabled
+        if self.auto_accept_swaps:
+            self.check_and_auto_execute_swaps()
 
         self.recompute_plan()
         self.time_ticked.emit()
@@ -453,6 +466,159 @@ class StateManager(QObject):
         self.save_state()
         self.recompute_plan()
         self.state_changed.emit()
+
+    def get_pending_swap_for_machine(self, machine_name: str) -> Optional[Dict]:
+        """Check if machine has a planned swap / relief / break pending confirmation at current time."""
+        machine = next((m for m in self.state.machines if m.name == machine_name or m.id == machine_name), None)
+        if not machine or machine.status != 'operational':
+            return None
+
+        now = self.get_current_time()
+        curr_op = machine.currentOperatorId
+
+        # Check planned segments for this machine
+        m_segs = [s for s in self.state.plannedSegments if s.machineName == machine.name and s.segmentType == 'assignment']
+        b_segs = [s for s in self.state.plannedSegments if s.segmentType == 'break']
+
+        # Look for an active planned assignment at now
+        active_assign = None
+        for s in m_segs:
+            try:
+                s_start = dateutil.parser.isoparse(s.startTime)
+                s_end = dateutil.parser.isoparse(s.endTime)
+                if s_start <= now < s_end:
+                    active_assign = (s, s_start, s_end)
+                    break
+            except Exception:
+                pass
+
+        if active_assign:
+            planned_seg, s_start, s_end = active_assign
+            planned_op = planned_seg.operatorName
+
+            if planned_op != curr_op:
+                # Check if current operator has a planned break starting around now
+                curr_op_break = False
+                if curr_op:
+                    for bs in b_segs:
+                        if bs.operatorName == curr_op:
+                            try:
+                                bs_start = dateutil.parser.isoparse(bs.startTime)
+                                bs_end = dateutil.parser.isoparse(bs.endTime)
+                                if bs_start <= now < bs_end:
+                                    curr_op_break = True
+                                    break
+                            except Exception:
+                                pass
+
+                if curr_op and curr_op_break:
+                    return {
+                        'machine_name': machine.name,
+                        'type': 'relief_swap',
+                        'outgoing_op': curr_op,
+                        'incoming_op': planned_op,
+                        'label': f"⇄ Relieve: {format_operator_short_name(planned_op)}",
+                        'tooltip': f"Send {curr_op} on break & hand over {machine.name} to {planned_op}",
+                        'start_time': s_start,
+                        'end_time': s_end
+                    }
+                elif curr_op:
+                    return {
+                        'machine_name': machine.name,
+                        'type': 'operator_swap',
+                        'outgoing_op': curr_op,
+                        'incoming_op': planned_op,
+                        'label': f"⇄ Swap: {format_operator_short_name(planned_op)}",
+                        'tooltip': f"Swap operator on {machine.name} to {planned_op}",
+                        'start_time': s_start,
+                        'end_time': s_end
+                    }
+                else:
+                    return {
+                        'machine_name': machine.name,
+                        'type': 'assign_operator',
+                        'outgoing_op': None,
+                        'incoming_op': planned_op,
+                        'label': f"🚜 Assign: {format_operator_short_name(planned_op)}",
+                        'tooltip': f"Assign {planned_op} to {machine.name}",
+                        'start_time': s_start,
+                        'end_time': s_end
+                    }
+            return None
+
+        # No active planned assignment at now (e.g. machine scheduled to park / synchronized break)
+        if curr_op:
+            for bs in b_segs:
+                if bs.operatorName == curr_op:
+                    try:
+                        bs_start = dateutil.parser.isoparse(bs.startTime)
+                        bs_end = dateutil.parser.isoparse(bs.endTime)
+                        if bs_start <= now < bs_end:
+                            return {
+                                'machine_name': machine.name,
+                                'type': 'send_break',
+                                'outgoing_op': curr_op,
+                                'incoming_op': None,
+                                'label': f"☕ Break: {format_operator_short_name(curr_op)}",
+                                'tooltip': f"Send {curr_op} on break & park {machine.name}",
+                                'start_time': bs_start,
+                                'end_time': bs_end
+                            }
+                    except Exception:
+                        pass
+
+        return None
+
+    def execute_pending_swap(self, machine_name: str) -> bool:
+        """Execute the pending swap/break transition for a machine."""
+        swap = self.get_pending_swap_for_machine(machine_name)
+        if not swap:
+            return False
+
+        outgoing_op = swap.get('outgoing_op')
+        incoming_op = swap.get('incoming_op')
+        swap_type = swap.get('type')
+
+        if swap_type == 'relief_swap':
+            if outgoing_op:
+                self.send_on_break(outgoing_op)
+            if incoming_op:
+                self.assign_operator(incoming_op, machine_name)
+        elif swap_type == 'send_break':
+            if outgoing_op:
+                self.send_on_break(outgoing_op)
+        elif swap_type in ('operator_swap', 'assign_operator'):
+            if incoming_op:
+                self.assign_operator(incoming_op, machine_name)
+
+        return True
+
+    def check_and_auto_execute_swaps(self):
+        """Check all machines and standby operators for due swaps/breaks and auto-execute them."""
+        if not self.auto_accept_swaps:
+            return
+
+        # 1. Operational machines pending swaps
+        for m in list(self.state.machines):
+            if m.status == 'operational':
+                swap = self.get_pending_swap_for_machine(m.name)
+                if swap:
+                    self.execute_pending_swap(m.name)
+
+        # 2. Standby operators scheduled for break
+        now = self.get_current_time()
+        for op in list(self.state.operators):
+            if op.status == 'standby':
+                for bs in self.state.plannedSegments:
+                    if bs.operatorName == op.name and bs.segmentType == 'break':
+                        try:
+                            bs_start = dateutil.parser.isoparse(bs.startTime)
+                            bs_end = dateutil.parser.isoparse(bs.endTime)
+                            if bs_start <= now <= bs_end:
+                                self.send_on_break(op.name)
+                                break
+                        except Exception:
+                            pass
 
     def recompute_plan(self):
         if self.state.settings.autoPlanEnabled:
@@ -731,3 +897,54 @@ class StateManager(QObject):
         self.save_state()
         self.recompute_plan()
         self.state_changed.emit()
+
+    def get_travel_time(self, start_zone: str, target_zone: str) -> int:
+        if start_zone == target_zone:
+            return 0
+            
+        import heapq
+        import math
+        
+        zone_map = {z.id: z for z in self.state.zones}
+        
+        if start_zone not in zone_map or target_zone not in zone_map:
+            return 0 # Fallback
+            
+        PIXELS_PER_MINUTE = 10.0
+        graph = {z.id: {} for z in self.state.zones}
+        
+        # Build adjacency list with Euclidean defaults
+        for z1 in self.state.zones:
+            for z2 in self.state.zones:
+                if z1.id != z2.id:
+                    dist = math.hypot(z2.x - z1.x, z2.y - z1.y)
+                    time = int(dist / PIXELS_PER_MINUTE)
+                    graph[z1.id][z2.id] = time
+            
+        for conn in self.state.zoneConnections:
+            if conn.zone_a in graph and conn.zone_b in graph:
+                # Undirected graph assuming travel time is symmetric
+                graph[conn.zone_a][conn.zone_b] = conn.travelTimeMinutes
+                graph[conn.zone_b][conn.zone_a] = conn.travelTimeMinutes
+            
+        distances = {node: float('infinity') for node in graph}
+        distances[start_zone] = 0
+        pq = [(0, start_zone)]
+        
+        while pq:
+            current_dist, current_node = heapq.heappop(pq)
+            
+            if current_node == target_zone:
+                return int(current_dist)
+                
+            if current_dist > distances[current_node]:
+                continue
+                
+            for neighbor, weight in graph[current_node].items():
+                distance = current_dist + weight
+                if distance < distances.get(neighbor, float('infinity')):
+                    distances[neighbor] = distance
+                    heapq.heappush(pq, (distance, neighbor))
+                    
+        return 0 # Unreachable
+

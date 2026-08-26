@@ -9,6 +9,7 @@ if not app:
     app = QApplication(sys.argv)
 
 from core.models import Operator, Machine, Zone, Settings
+from core.planner import ReliefPlanner
 from core.state_manager import StateManager, format_operator_short_name
 from ui.timeline_widget import TimelineRulerWidget, TimelineTrackWidget
 from ui.views import MachineRowWidget, OperatorRowWidget, ZoneView, EquipmentView, OperatorsView
@@ -378,6 +379,97 @@ class TestBreakFirstPlanner(unittest.TestCase):
 
         for t in break_starts:
             self.assertGreater(t, win_start, "Break too close to window start")
+
+    def test_pending_swap_detection_and_execution(self):
+        """When simulation time reaches a scheduled break, pending swap is detected and can be executed."""
+        import dateutil.parser
+        state = self._make_state(7, 5) # 2 spares
+        temp_file = os.path.join(os.path.dirname(__file__), "test_pending_swap.json")
+        try:
+            sm = StateManager(temp_file)
+            sm.timer.stop()
+            sm.state = state
+            sm.planner = ReliefPlanner(state)
+            sm.is_paused = True
+            sm.auto_accept_swaps = False
+            sm.simulated_time = self._day_shift_time(7, 0)
+            sm.state.simulatedTime = sm.simulated_time.isoformat()
+            sm.recompute_plan()
+
+            # Find first scheduled break for Op1 (on machine M1)
+            op1_breaks = [s for s in sm.state.plannedSegments if s.operatorName == 'Op1' and s.segmentType == 'break']
+            self.assertTrue(len(op1_breaks) > 0)
+            break_start = dateutil.parser.isoparse(op1_breaks[0].startTime)
+
+            # Before break time: no pending swap on M1 (Op1 is already operating M1)
+            sm.simulated_time = break_start - timedelta(minutes=10)
+            sm.state.simulatedTime = sm.simulated_time.isoformat()
+            self.assertIsNone(sm.get_pending_swap_for_machine('M1'))
+
+            # At break time: pending swap should be detected for M1!
+            sm.simulated_time = break_start
+            sm.state.simulatedTime = sm.simulated_time.isoformat()
+            swap = sm.get_pending_swap_for_machine('M1')
+            self.assertIsNotNone(swap)
+            self.assertEqual(swap['machine_name'], 'M1')
+            self.assertEqual(swap['outgoing_op'], 'Op1')
+            self.assertTrue(swap['incoming_op'] in ['Op6', 'Op7']) # One of the spares
+
+            # Execute pending swap
+            res = sm.execute_pending_swap('M1')
+            self.assertTrue(res)
+
+            # Op1 should now be on break
+            op1 = next(o for o in sm.state.operators if o.name == 'Op1')
+            self.assertEqual(op1.status, 'on_break')
+            self.assertEqual(op1.breaksTaken, 1)
+
+            # Machine M1 should now have the relief operator
+            m1 = next(m for m in sm.state.machines if m.name == 'M1')
+            self.assertEqual(m1.currentOperatorId, swap['incoming_op'])
+        finally:
+            if os.path.exists(temp_file):
+                os.remove(temp_file)
+
+    def test_auto_accept_swaps_during_simulation(self):
+        """When auto_accept_swaps is True, swaps and breaks execute automatically as time passes."""
+        import dateutil.parser
+        state = self._make_state(5, 5) # Synchronized mode
+        temp_file = os.path.join(os.path.dirname(__file__), "test_auto_accept.json")
+        try:
+            sm = StateManager(temp_file)
+            sm.timer.stop()
+            sm.state = state
+            sm.planner = ReliefPlanner(state)
+            sm.is_paused = False
+            sm.auto_accept_swaps = True
+            sm.simulated_time = self._day_shift_time(7, 0)
+            sm.state.simulatedTime = sm.simulated_time.isoformat()
+            sm.recompute_plan()
+
+            # Find first synchronized break start time
+            all_breaks = [s for s in sm.state.plannedSegments if s.segmentType == 'break']
+            first_break_start = dateutil.parser.isoparse(all_breaks[0].startTime)
+
+            # Advance time to just before break
+            sm.simulated_time = first_break_start - timedelta(seconds=1)
+            sm.state.simulatedTime = sm.simulated_time.isoformat()
+
+            # Op1 still working before break
+            op1 = next(o for o in sm.state.operators if o.name == 'Op1')
+            self.assertEqual(op1.status, 'working')
+
+            # Tick into the break time with auto_accept_swaps enabled
+            sm.simulated_time = first_break_start
+            sm.state.simulatedTime = sm.simulated_time.isoformat()
+            sm.check_and_auto_execute_swaps()
+
+            # Op1 should automatically be on break now
+            self.assertEqual(op1.status, 'on_break')
+            self.assertEqual(op1.breaksTaken, 1)
+        finally:
+            if os.path.exists(temp_file):
+                os.remove(temp_file)
 
 
 if __name__ == "__main__":

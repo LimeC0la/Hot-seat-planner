@@ -97,6 +97,7 @@ class MachineRowWidget(QFrame):
         
         # Right column: Compact timeline track
         self.timeline_track = TimelineTrackWidget()
+        self.timeline_track.swap_confirmed.connect(self.on_confirm_swap)
         layout.addWidget(self.timeline_track, 1)
         
         self.update_ui()
@@ -104,6 +105,8 @@ class MachineRowWidget(QFrame):
 
     def update_ui(self):
         is_nr = self.machine.status == 'not_required'
+        pending_swap = self.state_manager.get_pending_swap_for_machine(self.machine.name)
+
         if is_nr:
             self.status_badge.setText("⊘")
             self.status_badge.setToolTip("Not Required (Parked)")
@@ -123,7 +126,26 @@ class MachineRowWidget(QFrame):
             self.status_badge.setVisible(False)
             self.activate_btn.setVisible(False)
             self.name_lbl.setStyleSheet("font-weight: bold; font-size: 13px; color: #f8fafc; background: transparent;")
-            self.relieve_btn.setVisible(self.machine.currentOperatorId is not None)
+            
+            if pending_swap:
+                self.relieve_btn.setText("Confirm")
+                self.relieve_btn.setToolTip(pending_swap.get('tooltip', 'Confirm scheduled swap'))
+                self.relieve_btn.setStyleSheet("""
+                    QPushButton {
+                        background-color: #d97706;
+                        color: white;
+                        border: 1px solid #fbbf24;
+                        border-radius: 3px;
+                        padding: 1px 8px;
+                        font-weight: bold;
+                        font-size: 11px;
+                    }
+                    QPushButton:hover { background-color: #f59e0b; }
+                """)
+                self.relieve_btn.setVisible(True)
+            else:
+                self.relieve_btn.setVisible(False)
+
             self.setStyleSheet("""
                 MachineRowWidget {
                     background-color: #1e293b;
@@ -133,13 +155,19 @@ class MachineRowWidget(QFrame):
             """)
             
         segments = self.state_manager.get_machine_segments(self.machine.name)
+        self.timeline_track.set_pending_swap(pending_swap)
         self.timeline_track.set_segments(segments, self.state_manager.get_current_time())
 
     def on_activate(self):
         self.state_manager.set_machine_status(self.machine.name, 'operational')
 
+    def on_confirm_swap(self, machine_name):
+        self.state_manager.execute_pending_swap(machine_name)
+
     def on_relieve(self):
-        if self.machine.currentOperatorId:
+        if self.state_manager.get_pending_swap_for_machine(self.machine.name):
+            self.state_manager.execute_pending_swap(self.machine.name)
+        elif self.machine.currentOperatorId:
             self.state_manager.send_on_break(self.machine.currentOperatorId)
 
     def mousePressEvent(self, event):

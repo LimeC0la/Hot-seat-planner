@@ -232,11 +232,12 @@ class ReliefPlanner:
             spare_ops.sort(key=lambda n: -sim_ops[n].standby_time_minutes)
 
         # ──────────────────────────────────────────────────────────────
+        # ──────────────────────────────────────────────────────────────
         # 5. Calculate break window and demand
         # ──────────────────────────────────────────────────────────────
-        break_win_start = max(now, shift_start + timedelta(minutes=settings.shiftBreakWindowStartOffsetMinutes))
-        break_win_end = shift_end - timedelta(minutes=settings.shiftBreakWindowEndOffsetMinutes)
-        last_possible_start = break_win_end - break_dur  # latest a break can BEGIN
+        shift_break_win_start = shift_start + timedelta(minutes=settings.shiftBreakWindowStartOffsetMinutes)
+        shift_break_win_end = shift_end - timedelta(minutes=settings.shiftBreakWindowEndOffsetMinutes)
+        last_possible_start = shift_break_win_end - break_dur  # latest a break can BEGIN
 
         # Per-operator scheduling state (mutable during planning)
         op_sched_breaks: Dict[str, int] = {n: sim_ops[n].breaks_taken for n in sim_ops}
@@ -247,7 +248,7 @@ class ReliefPlanner:
         # Track when spares are busy covering machines
         spare_busy: List[tuple] = []  # (start, end, spare_name)
 
-        has_valid_window = last_possible_start > break_win_start and settings.targetBreaksPerShift > 0
+        has_valid_window = last_possible_start > shift_break_win_start and settings.targetBreaksPerShift > 0
 
         if has_valid_window:
             if spare_count == 0:
@@ -256,26 +257,26 @@ class ReliefPlanner:
                 # All operators break at the same time.
                 # All machines park up together to synchronise production.
                 # ═════════════════════════════════════════════════════
-                max_remaining = max(
-                    (settings.targetBreaksPerShift - op_sched_breaks.get(n, 0))
-                    for n in sim_ops
-                )
-                num_rounds = max(0, max_remaining)
+                num_rounds = settings.targetBreaksPerShift
 
                 if num_rounds > 0:
-                    available_seconds = (last_possible_start - break_win_start).total_seconds()
+                    available_seconds = (last_possible_start - shift_break_win_start).total_seconds()
 
-                    # Evenly centre rounds within the window
+                    # Evenly space rounds across the shift break window
                     if num_rounds == 1:
-                        round_times = [break_win_start + timedelta(seconds=available_seconds / 2)]
+                        round_times = [shift_break_win_start + timedelta(seconds=available_seconds / 2)]
                     else:
                         interval = available_seconds / (num_rounds + 1)
                         round_times = [
-                            break_win_start + timedelta(seconds=(i + 1) * interval)
+                            shift_break_win_start + timedelta(seconds=(i + 1) * interval)
                             for i in range(num_rounds)
                         ]
 
                     for round_time in round_times:
+                        # Skip if round already finished before now
+                        if round_time + break_dur <= now:
+                            continue
+
                         for op_name in list(sim_ops.keys()):
                             remaining = settings.targetBreaksPerShift - op_sched_breaks.get(op_name, 0)
                             if remaining <= 0:
@@ -285,10 +286,7 @@ class ReliefPlanner:
                             if last_end and round_time < last_end + cooldown:
                                 continue
                             # Window bounds check
-                            if round_time + break_dur > break_win_end:
-                                continue
-                            # Availability check (operator might still be on a current break)
-                            if sim_ops[op_name].available_at > round_time:
+                            if round_time + break_dur > shift_break_win_end:
                                 continue
 
                             machine_name = op_machine.get(op_name)  # None for standby ops
@@ -304,27 +302,28 @@ class ReliefPlanner:
                 # ═════════════════════════════════════════════════════
 
                 # --- Phase B1: Schedule machine-operator breaks ---
-                machine_breaks_needed = sum(
-                    max(0, settings.targetBreaksPerShift - op_sched_breaks.get(n, 0))
-                    for n in op_machine
-                )
+                total_machine_breaks = len(op_machine) * settings.targetBreaksPerShift
                 max_concurrent = spare_count
 
-                if machine_breaks_needed > 0 and max_concurrent > 0:
-                    num_rounds = math.ceil(machine_breaks_needed / max_concurrent)
-                    available_seconds = (last_possible_start - break_win_start).total_seconds()
+                if total_machine_breaks > 0 and max_concurrent > 0:
+                    num_rounds = math.ceil(total_machine_breaks / max_concurrent)
+                    available_seconds = (last_possible_start - shift_break_win_start).total_seconds()
 
-                    # Evenly centre rounds within the window
+                    # Evenly space rounds across the shift break window
                     if num_rounds == 1:
-                        round_times = [break_win_start + timedelta(seconds=available_seconds / 2)]
+                        round_times = [shift_break_win_start + timedelta(seconds=available_seconds / 2)]
                     else:
                         interval = available_seconds / (num_rounds + 1)
                         round_times = [
-                            break_win_start + timedelta(seconds=(i + 1) * interval)
+                            shift_break_win_start + timedelta(seconds=(i + 1) * interval)
                             for i in range(num_rounds)
                         ]
 
                     for round_time in round_times:
+                        # Skip if round already finished before now
+                        if round_time + break_dur <= now:
+                            continue
+
                         # Eligible machine operators for this round
                         eligible = []
                         for op_name in op_machine:
@@ -334,9 +333,7 @@ class ReliefPlanner:
                             last_end = op_sched_last_end.get(op_name)
                             if last_end and round_time < last_end + cooldown:
                                 continue
-                            if round_time + break_dur > break_win_end:
-                                continue
-                            if sim_ops[op_name].available_at > round_time:
+                            if round_time + break_dur > shift_break_win_end:
                                 continue
                             eligible.append(op_name)
 
@@ -357,7 +354,7 @@ class ReliefPlanner:
                             # Find a qualified, available spare for relief
                             relief_op = self._find_relief(
                                 machine_type, spare_ops, sim_ops, spare_busy,
-                                round_time, break_dur
+                                round_time, break_dur, now=now
                             )
                             if relief_op is None:
                                 continue  # no qualified spare available this round
@@ -373,18 +370,18 @@ class ReliefPlanner:
                 for op_name in list(op_machine.keys()):
                     remaining = settings.targetBreaksPerShift - op_sched_breaks.get(op_name, 0)
                     while remaining > 0:
-                        cursor = max(break_win_start, sim_ops[op_name].available_at)
+                        cursor = max(now, shift_break_win_start, sim_ops[op_name].available_at)
                         last_end = op_sched_last_end.get(op_name)
                         if last_end:
                             cursor = max(cursor, last_end + cooldown)
 
                         found = False
-                        while cursor + break_dur <= break_win_end:
+                        while cursor + break_dur <= shift_break_win_end:
                             machine_name = op_machine[op_name]
                             machine_type = machine_type_map.get(machine_name, '')
                             relief_op = self._find_relief(
                                 machine_type, spare_ops, sim_ops, spare_busy,
-                                cursor, break_dur
+                                cursor, break_dur, now=now
                             )
                             if relief_op is not None:
                                 bs, be = cursor, cursor + break_dur
@@ -403,13 +400,13 @@ class ReliefPlanner:
                 for spare_name in spare_ops:
                     remaining = settings.targetBreaksPerShift - op_sched_breaks.get(spare_name, 0)
                     while remaining > 0:
-                        cursor = max(break_win_start, sim_ops[spare_name].available_at)
+                        cursor = max(now, shift_break_win_start, sim_ops[spare_name].available_at)
                         last_end = op_sched_last_end.get(spare_name)
                         if last_end:
                             cursor = max(cursor, last_end + cooldown)
 
                         found = False
-                        while cursor + break_dur <= break_win_end:
+                        while cursor + break_dur <= shift_break_win_end:
                             # Spare must not be covering a machine at this time
                             busy = any(
                                 s == spare_name
@@ -469,8 +466,21 @@ class ReliefPlanner:
                 seg_start = primary_available
 
             for bs, be, _break_op, relief_op in m_breaks:
-                if bs < seg_start:
-                    continue  # break is before current segment start
+                if be <= seg_start:
+                    continue  # break finished before current segment start
+
+                # If break is active right now (bs <= seg_start < be)
+                if bs <= seg_start < be:
+                    if relief_op:
+                        planned_segments.append(PlannedSegment(
+                            startTime=seg_start.isoformat(),
+                            endTime=be.isoformat(),
+                            operatorName=relief_op,
+                            machineName=m.name,
+                            segmentType="assignment"
+                        ))
+                    seg_start = be
+                    continue
 
                 # Primary operator assignment segment before this break
                 if bs > seg_start:
@@ -491,7 +501,6 @@ class ReliefPlanner:
                         machineName=m.name,
                         segmentType="assignment"
                     ))
-                # else: machine is idle (synchronized break — no segment)
 
                 seg_start = be
 
@@ -507,8 +516,11 @@ class ReliefPlanner:
 
         # --- Break segments for all operators ---
         for bs, be, op_name, _mn, _rel in break_events:
+            if be <= now:
+                continue
+            b_start = max(now, bs)
             planned_segments.append(PlannedSegment(
-                startTime=bs.isoformat(),
+                startTime=b_start.isoformat(),
                 endTime=be.isoformat(),
                 operatorName=op_name,
                 machineName="",
@@ -529,15 +541,17 @@ class ReliefPlanner:
         sim_ops: Dict[str, SimOperator],
         spare_busy: List[tuple],
         at_time: datetime,
-        break_dur: timedelta
+        break_dur: timedelta,
+        now: Optional[datetime] = None
     ) -> Optional[str]:
         """Find a qualified spare operator available to cover a machine
         of *machine_type* during [at_time, at_time + break_dur]."""
+        check_time = max(now, at_time) if now else at_time
         for spare_name in spare_ops:
             if machine_type not in sim_ops[spare_name].qualifications:
                 continue
             # Must be available (not still on their own break)
-            if sim_ops[spare_name].available_at > at_time:
+            if sim_ops[spare_name].available_at > check_time:
                 continue
             # Must not already be covering another machine at this time
             busy = any(
