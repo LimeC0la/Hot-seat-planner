@@ -23,6 +23,8 @@ export interface Machine {
   zoneId: string;
   transitTimeMinutes: number;
   currentOperatorId: string | null;
+  primaryOperatorId?: string | null;
+  reliefOperatorId?: string | null;
   status: MachineStatus;
   priority: number;
   dozerRole?: 'pit' | 'dump';

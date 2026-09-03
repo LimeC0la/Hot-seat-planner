@@ -251,6 +251,40 @@ export class ReliefPlanner {
     }
 
     // ─────────────────────────────────────────────────────────────
+    // STEP 1B: ACCOUNT FOR ACTIVE IN-PROGRESS RELIEFS
+    // ─────────────────────────────────────────────────────────────
+    for (const m of operationalMachines) {
+      if (m.reliefOperatorId && m.currentOperatorId === m.reliefOperatorId && m.primaryOperatorId) {
+        const activeAssign = this.state.assignments.find(
+          a => a.operatorId === m.reliefOperatorId && a.machineId === m.name && !a.endTime
+        );
+        const relStart = activeAssign ? new Date(activeAssign.startTime) : now;
+        const relEnd = new Date(relStart.getTime() + breakDurationMs);
+
+        breakEvents.push({
+          start: relStart,
+          end: relEnd,
+          operatorName: m.primaryOperatorId,
+          machineName: m.name,
+          reliefName: m.reliefOperatorId,
+          isHotseatRelief: true,
+          isLocked: true
+        });
+
+        spareBusy.push({
+          start: now,
+          end: relEnd,
+          spareName: m.reliefOperatorId
+        });
+
+        if (simOps[m.primaryOperatorId]) {
+          simOps[m.primaryOperatorId].plannedBreaksCount++;
+          simOps[m.primaryOperatorId].lastBreakEnd = relEnd;
+        }
+      }
+    }
+
+    // ─────────────────────────────────────────────────────────────
     // STEP 2: SHELL 1 — DIRECT PRODUCTION CIRCUITS (Digger + Trucks)
     // ─────────────────────────────────────────────────────────────
     const circuitsByZone: Record<string, Circuit[]> = {};
@@ -590,8 +624,8 @@ export class ReliefPlanner {
     const plannedSegments: PlannedSegment[] = [];
 
     for (const m of operationalMachines) {
-      if (!m.currentOperatorId) continue;
-      const primaryOp = m.currentOperatorId;
+      if (!m.currentOperatorId && !m.primaryOperatorId) continue;
+      const primaryOp = m.primaryOperatorId || m.currentOperatorId!;
 
       const machEvents = breakEvents
         .filter(ev => ev.machineName === m.name)

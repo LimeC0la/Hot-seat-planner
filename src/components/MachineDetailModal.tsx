@@ -24,6 +24,7 @@ export const MachineDetailModal: React.FC<MachineDetailModalProps> = ({
     setDozerRole,
     adjustCircuitCapacity,
     sendOnBreak,
+    returnPrimaryOperator,
     removeHotseatLock
   } = useShiftStore();
 
@@ -118,7 +119,27 @@ export const MachineDetailModal: React.FC<MachineDetailModalProps> = ({
                 </span>
               )}
             </div>
-            {currentOp ? (
+
+            {/* Active Relief In Progress Banner */}
+            {machine.reliefOperatorId && machine.primaryOperatorId ? (
+              <div className="p-3 bg-emerald-950/40 rounded-xl border border-emerald-700/60 flex items-center justify-between">
+                <div>
+                  <div className="font-bold text-emerald-300 text-xs flex items-center gap-1.5">
+                    <span>⚡</span> Active Hotseat Relief in Progress
+                  </div>
+                  <div className="text-[11px] text-slate-300 mt-0.5">
+                    <span className="font-semibold text-emerald-400">{machine.reliefOperatorId}</span> is covering for{' '}
+                    <span className="font-semibold text-sky-400">{machine.primaryOperatorId}</span> (on crib)
+                  </div>
+                </div>
+                <button
+                  onClick={() => returnPrimaryOperator(machine.name)}
+                  className="px-3 py-1.5 bg-emerald-700 hover:bg-emerald-600 text-white font-bold rounded-lg shadow cursor-pointer text-xs"
+                >
+                  Return Primary Driver
+                </button>
+              </div>
+            ) : currentOp ? (
               <div className="flex items-center justify-between">
                 <div>
                   <div className="text-sm font-bold text-slate-100 flex items-center gap-1.5">

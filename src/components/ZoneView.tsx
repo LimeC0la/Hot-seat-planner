@@ -13,6 +13,7 @@ export const ZoneView: React.FC = () => {
     appState,
     currentTime,
     relieveOperatorOnMachine,
+    returnPrimaryOperator,
     setAreaShutdownMode,
     adjustCircuitCapacity
   } = useShiftStore();
@@ -35,31 +36,54 @@ export const ZoneView: React.FC = () => {
   const [detailMachine, setDetailMachine] = useState<Machine | null>(null);
   const [preassignMachine, setPreassignMachine] = useState<Machine | null>(null);
 
-  // Standby operators for quick relief
-  const standbyOps = operators.filter(o => o.status === 'standby');
-
   const getMachineSegments = (machineName: string) => {
     return plannedSegments.filter(s => s.machineName === machineName);
   };
 
-  const getPendingReliefOp = (m: Machine): string | null => {
-    if (!m.currentOperatorId) return null;
+  const getReliefState = (m: Machine) => {
+    // 1. Check if currently under active relief
+    const isCurrentlyRelieved = Boolean(
+      m.reliefOperatorId && m.currentOperatorId === m.reliefOperatorId
+    );
+
+    if (isCurrentlyRelieved) {
+      return {
+        isCurrentlyRelieved: true,
+        primaryOpName: m.primaryOperatorId || null,
+        reliefOpName: m.reliefOperatorId || null,
+        pendingRelief: null,
+        returnPrimary: m.primaryOperatorId || null
+      };
+    }
+
+    // 2. Machine is operating with primary driver.
+    // Check if there is a scheduled hotseat relief starting around now!
     const segs = getMachineSegments(m.name);
-    const currentRelief = segs.find(s => {
+    const scheduled = segs.find(s => {
+      if (s.segmentType !== 'assignment') return false;
+      if (!s.isHotseatRelief) return false;
+      if (s.operatorName === m.currentOperatorId) return false;
+
       const sStart = new Date(s.startTime);
       const sEnd = new Date(s.endTime);
-      return (
-        s.segmentType === 'assignment' &&
-        s.operatorName !== m.currentOperatorId &&
-        now >= new Date(sStart.getTime() - 10 * 60 * 1000) &&
-        now <= sEnd
-      );
+      return now >= new Date(sStart.getTime() - 10 * 60 * 1000) && now <= sEnd;
     });
 
-    if (currentRelief) return currentRelief.operatorName;
+    let pendingRelief: string | null = null;
+    if (scheduled) {
+      const op = operators.find(o => o.name === scheduled.operatorName);
+      if (op && (op.status === 'standby' || op.status === 'working')) {
+        pendingRelief = scheduled.operatorName;
+      }
+    }
 
-    const qualifiedStandby = standbyOps.find(o => o.qualifications.includes(m.type));
-    return qualifiedStandby ? qualifiedStandby.name : null;
+    return {
+      isCurrentlyRelieved: false,
+      primaryOpName: m.primaryOperatorId || m.currentOperatorId || null,
+      reliefOpName: null,
+      pendingRelief,
+      returnPrimary: null
+    };
   };
 
   const handleOpenContextMenu = (
@@ -85,7 +109,7 @@ export const ZoneView: React.FC = () => {
     const isNR = m.status === 'not_required';
     const isMaint = m.status === 'maintenance';
     const currentOp = operators.find(o => o.name === m.currentOperatorId);
-    const pendingRelief = getPendingReliefOp(m);
+    const { isCurrentlyRelieved, primaryOpName, reliefOpName, pendingRelief, returnPrimary } = getReliefState(m);
     const segs = getMachineSegments(m.name);
     const hasLock = (appState.manualReliefs || []).some(
       l => l.machineName === m.name && l.locked
@@ -97,7 +121,7 @@ export const ZoneView: React.FC = () => {
         onContextMenu={e => handleOpenContextMenu(e, m, circuit)}
         onClick={() => setDetailMachine(m)}
         className={`group flex items-center gap-3 p-2 rounded-xl border transition-all cursor-pointer select-none ${
-          isIndented ? 'ml-5 bg-slate-900/90 border-slate-800 hover:border-slate-650' : ''
+          isIndented ? 'ml-5 bg-slate-900/90 border-slate-800 hover:border-slate-655' : ''
         } ${
           isNR
             ? 'bg-slate-950/40 border-slate-800/60 opacity-60'
@@ -139,7 +163,17 @@ export const ZoneView: React.FC = () => {
             </div>
 
             <div className="text-xs text-slate-400 truncate flex items-center gap-1 mt-0.5">
-              {currentOp ? (
+              {isCurrentlyRelieved && reliefOpName ? (
+                <span
+                  className="text-emerald-300 font-semibold truncate"
+                  title={`Relieved by ${reliefOpName} (Primary: ${primaryOpName || 'Driver'})`}
+                >
+                  ⚡ {formatShortName(reliefOpName)}{' '}
+                  <span className="text-[10px] text-slate-400 font-normal">
+                    ({formatShortName(primaryOpName || '')} on crib)
+                  </span>
+                </span>
+              ) : currentOp ? (
                 <span className="text-sky-300 font-medium truncate">
                   👷 {formatShortName(currentOp.name)}
                 </span>
@@ -169,6 +203,10 @@ export const ZoneView: React.FC = () => {
             pendingReliefName={pendingRelief}
             onConfirmRelief={() => {
               if (pendingRelief) relieveOperatorOnMachine(m.name, pendingRelief);
+            }}
+            returnPrimaryName={returnPrimary}
+            onConfirmReturnPrimary={() => {
+              returnPrimaryOperator(m.name);
             }}
           />
         </div>

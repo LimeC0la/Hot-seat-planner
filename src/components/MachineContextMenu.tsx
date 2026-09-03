@@ -27,6 +27,7 @@ export const MachineContextMenu: React.FC<MachineContextMenuProps> = ({
     setDozerRole,
     adjustCircuitCapacity,
     sendOnBreak,
+    returnPrimaryOperator,
     removeHotseatLock
   } = useShiftStore();
 
@@ -237,7 +238,18 @@ export const MachineContextMenu: React.FC<MachineContextMenuProps> = ({
 
       {/* Immediate operational actions */}
       <div className="pt-1 border-t border-slate-800 space-y-1">
-        {currentOp && (
+        {machine.reliefOperatorId && machine.primaryOperatorId ? (
+          <button
+            onClick={() => {
+              returnPrimaryOperator(machine.name);
+              onClose();
+            }}
+            className="w-full py-1 px-2 text-left rounded bg-emerald-950/60 hover:bg-emerald-900/80 text-emerald-300 flex items-center gap-1.5 font-semibold"
+          >
+            <span>⇄</span>
+            <span>Return Primary ({formatShortName(machine.primaryOperatorId)})</span>
+          </button>
+        ) : currentOp ? (
           <button
             onClick={() => {
               sendOnBreak(currentOp);
@@ -248,7 +260,7 @@ export const MachineContextMenu: React.FC<MachineContextMenuProps> = ({
             <span>☕</span>
             <span>Send Driver on Break Now</span>
           </button>
-        )}
+        ) : null}
 
         <button
           onClick={() => {

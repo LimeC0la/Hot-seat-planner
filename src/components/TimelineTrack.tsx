@@ -7,13 +7,17 @@ interface TimelineTrackProps {
   currentTime: Date;
   pendingReliefName?: string | null;
   onConfirmRelief?: () => void;
+  returnPrimaryName?: string | null;
+  onConfirmReturnPrimary?: () => void;
 }
 
 export const TimelineTrack: React.FC<TimelineTrackProps> = ({
   segments,
   currentTime,
   pendingReliefName,
-  onConfirmRelief
+  onConfirmRelief,
+  returnPrimaryName,
+  onConfirmReturnPrimary
 }) => {
   const { shiftStart, shiftEnd } = getShiftBounds(currentTime);
   const totalMs = shiftEnd.getTime() - shiftStart.getTime();
@@ -89,14 +93,37 @@ export const TimelineTrack: React.FC<TimelineTrackProps> = ({
         style={{ left: `${currentPct}%` }}
       />
 
-      {/* Interactive Pending Relief Action Pill */}
-      {pendingReliefName && onConfirmRelief && (
+      {/* Return Primary Operator Action Pill */}
+      {returnPrimaryName && onConfirmReturnPrimary && (
         <div
           className="absolute z-20 -translate-x-1/2"
           style={{ left: `${currentPct}%` }}
         >
           <button
-            onClick={onConfirmRelief}
+            onClick={e => {
+              e.stopPropagation();
+              onConfirmReturnPrimary();
+            }}
+            className="px-2.5 py-1 text-xs font-bold bg-emerald-600 hover:bg-emerald-500 active:bg-emerald-700 text-white rounded-full shadow-lg border border-emerald-300 flex items-center gap-1 animate-pulse cursor-pointer"
+            title={`Hand machine back to primary operator ${returnPrimaryName}`}
+          >
+            <span>⇄ Return:</span>
+            <span className="underline">{formatShortName(returnPrimaryName)}</span>
+          </button>
+        </div>
+      )}
+
+      {/* Interactive Pending Relief Action Pill */}
+      {pendingReliefName && onConfirmRelief && !returnPrimaryName && (
+        <div
+          className="absolute z-20 -translate-x-1/2"
+          style={{ left: `${currentPct}%` }}
+        >
+          <button
+            onClick={e => {
+              e.stopPropagation();
+              onConfirmRelief();
+            }}
             className="px-2.5 py-1 text-xs font-bold bg-amber-500 hover:bg-amber-400 active:bg-amber-600 text-slate-950 rounded-full shadow-lg border border-amber-300 flex items-center gap-1 animate-pulse cursor-pointer"
             title={`Relieve machine with ${pendingReliefName}`}
           >

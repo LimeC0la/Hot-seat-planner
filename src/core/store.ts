@@ -24,6 +24,7 @@ interface ShiftStore {
   setOperatorAbsent: (operatorId: string, absent: boolean) => void;
   setMachineStatus: (machineId: string, status: MachineStatus) => void;
   relieveOperatorOnMachine: (machineName: string, reliefOpName: string) => void;
+  returnPrimaryOperator: (machineName: string) => void;
 
   // Machine & Circuit Adjustments
   adjustCircuitCapacity: (circuitId: string, delta: number) => void;
@@ -250,7 +251,17 @@ export const useShiftStore = create<ShiftStore>()(
       },
 
       returnFromBreak: (operatorId: string) => {
-        const { appState, currentTime } = get();
+        const { appState, currentTime, returnPrimaryOperator } = get();
+
+        // Check if operatorId is the primaryOperatorId of any machine currently under relief
+        const machineUnderRelief = appState.machines.find(
+          m => (m.primaryOperatorId === operatorId) && m.reliefOperatorId
+        );
+        if (machineUnderRelief) {
+          returnPrimaryOperator(machineUnderRelief.name);
+          return;
+        }
+
         const operators = appState.operators.map(op => {
           if (op.name === operatorId || op.id === operatorId) {
             return {
@@ -355,8 +366,11 @@ export const useShiftStore = create<ShiftStore>()(
         // 2. Assign relief operator to machine
         const machines = appState.machines.map(m => {
           if (m.name === machineName || m.id === machineName) {
+            const primaryOp = m.primaryOperatorId || outgoingOpName;
             return {
               ...m,
+              primaryOperatorId: primaryOp,
+              reliefOperatorId: reliefOpName,
               currentOperatorId: reliefOpName,
               status: 'operational' as const
             };
@@ -389,6 +403,87 @@ export const useShiftStore = create<ShiftStore>()(
             endTime: ''
           });
         }
+
+        set({
+          appState: {
+            ...appState,
+            operators,
+            machines,
+            assignments,
+            breaks
+          }
+        });
+
+        get().recomputePlan();
+      },
+
+      returnPrimaryOperator: (machineName: string) => {
+        const { appState, currentTime } = get();
+        const machine = appState.machines.find(m => m.name === machineName || m.id === machineName);
+        if (!machine) return;
+
+        const primaryOpName = machine.primaryOperatorId;
+        const currentReliefOpName = machine.reliefOperatorId;
+        if (!primaryOpName) return;
+
+        // 1. Return primary operator to working on machine, return relief operator to standby
+        const operators = appState.operators.map(op => {
+          if (op.name === primaryOpName || op.id === primaryOpName) {
+            return {
+              ...op,
+              status: 'working' as const,
+              currentAssignmentId: machineName
+            };
+          }
+          if (currentReliefOpName && (op.name === currentReliefOpName || op.id === currentReliefOpName)) {
+            return {
+              ...op,
+              status: 'standby' as const,
+              currentAssignmentId: null
+            };
+          }
+          return op;
+        });
+
+        // 2. Update machine
+        const machines = appState.machines.map(m => {
+          if (m.name === machineName || m.id === machineName) {
+            return {
+              ...m,
+              currentOperatorId: primaryOpName,
+              reliefOperatorId: null
+            };
+          }
+          return m;
+        });
+
+        // 3. Close relief assignment, close primary break, start primary assignment
+        const assignments = appState.assignments.map(a => {
+          if (
+            currentReliefOpName &&
+            a.operatorId === currentReliefOpName &&
+            a.machineId === machineName &&
+            !a.endTime
+          ) {
+            return { ...a, endTime: currentTime };
+          }
+          return a;
+        });
+
+        assignments.push({
+          id: `assign_${Date.now()}`,
+          operatorId: primaryOpName,
+          machineId: machineName,
+          startTime: currentTime,
+          endTime: ''
+        });
+
+        const breaks = appState.breaks.map(b => {
+          if (b.operatorId === primaryOpName && !b.endTime) {
+            return { ...b, endTime: currentTime };
+          }
+          return b;
+        });
 
         set({
           appState: {
@@ -504,7 +599,9 @@ export const useShiftStore = create<ShiftStore>()(
           return {
             ...m,
             status: isNR ? ('not_required' as const) : ('operational' as const),
-            currentOperatorId: assignedOp
+            currentOperatorId: assignedOp,
+            primaryOperatorId: assignedOp,
+            reliefOperatorId: null
           };
         });
 
