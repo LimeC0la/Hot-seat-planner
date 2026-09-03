@@ -184,9 +184,17 @@ class MainWindow(QMainWindow):
         self.equip_view = EquipmentView(self.state_manager)
         self.op_view = OperatorsView(self.state_manager)
         
+        from .production_view import ProductionView
+        self.prod_view = ProductionView(self.state_manager)
+        
+        from .reports_view import ReportsView
+        self.reports_view = ReportsView(self.state_manager)
+        
         self.tabs.addTab(self.zone_view, "Zone View")
         self.tabs.addTab(self.equip_view, "Equipment View")
         self.tabs.addTab(self.op_view, "Operators View")
+        self.tabs.addTab(self.prod_view, "Production Queue")
+        self.tabs.addTab(self.reports_view, "Analytics")
         
         main_layout.addWidget(self.tabs)
         layout.addWidget(main_area, 1) # Expand main area

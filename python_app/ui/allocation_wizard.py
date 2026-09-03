@@ -1,7 +1,8 @@
 from PySide6.QtWidgets import (
     QDialog, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QLineEdit, QScrollArea, QFrame, QComboBox, QCheckBox, QGridLayout,
-    QMessageBox, QStackedWidget, QSizePolicy, QButtonGroup, QRadioButton
+    QMessageBox, QStackedWidget, QSizePolicy, QButtonGroup, QRadioButton,
+    QSpinBox
 )
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QColor, QFont
@@ -447,7 +448,9 @@ class EquipmentAssignmentRow(QFrame):
             trk_layout.addWidget(QLabel("Req. Trucks:"))
             self.trucks_spin = QSpinBox()
             self.trucks_spin.setRange(0, 20)
-            self.trucks_spin.setValue(getattr(self.machine, 'requiredTrucks', 4))
+            digger_circuit = next((c for c in self.wizard.state_manager.state.circuits if c.diggerId == self.machine.name), None)
+            initial_req = digger_circuit.optimalTruckCount if digger_circuit else 4
+            self.trucks_spin.setValue(initial_req)
             self.trucks_spin.valueChanged.connect(self.on_trucks_changed)
             trk_layout.addWidget(self.trucks_spin)
             self.options_layout.addLayout(trk_layout)
@@ -511,10 +514,22 @@ class EquipmentAssignmentRow(QFrame):
         self.machine.priority = value
 
     def on_trucks_changed(self, value: int):
-        self.machine.requiredTrucks = value
+        digger_circuit = next((c for c in self.wizard.state_manager.state.circuits if c.diggerId == self.machine.name), None)
+        if digger_circuit:
+            digger_circuit.optimalTruckCount = value
 
     def on_circuit_changed(self, index: int):
-        self.machine.circuitGroup = self.circuit_combo.currentData()
+        new_circ = self.circuit_combo.currentData()
+        # Remove from old circuits
+        for c in self.wizard.state_manager.state.circuits:
+            if self.machine.name in c.truckIds:
+                c.truckIds.remove(self.machine.name)
+        # Add to new
+        if new_circ:
+            for c in self.wizard.state_manager.state.circuits:
+                if c.name == new_circ:
+                    c.truckIds.append(self.machine.name)
+                    break
 
     def clear_assignment(self):
         self.wizard.allocations[self.machine.name] = None
@@ -591,7 +606,11 @@ class EquipmentAssignmentRow(QFrame):
             from .allocation_wizard import is_digger
             if hasattr(self, 'circuit_combo') and not is_digger(self.machine.type):
                 self.circuit_combo.blockSignals(True)
-                current_circ = getattr(self.machine, 'circuitGroup', "")
+                current_circ = ""
+                for c in self.wizard.state_manager.state.circuits:
+                    if self.machine.name in c.truckIds:
+                        current_circ = c.name
+                        break
                 self.circuit_combo.clear()
                 self.circuit_combo.addItem("General / Unassigned", "")
                 
@@ -879,7 +898,11 @@ class ReviewStepWidget(QWidget):
         
         for m in current_active_machines:
             if not is_digger(m.type):
-                c_grp = getattr(m, 'circuitGroup', "")
+                c_grp = ""
+                for c in wizard.state_manager.state.circuits:
+                    if m.name in c.truckIds:
+                        c_grp = c.name
+                        break
                 if c_grp and c_grp in circuit_map:
                     circuit_map[c_grp].append(m)
                 else:
@@ -909,7 +932,8 @@ class ReviewStepWidget(QWidget):
                 
                 # "1 digger with 20 trucks isnt as productive as 3 diggers with 5 trucks"
                 # Diminishing returns on trucks: we can use a modifier or just sqrt(trucks) for demonstration, or cap it at requiredTrucks
-                req = getattr(d, 'requiredTrucks', 4)
+                circuit_obj = next((c for c in wizard.state_manager.state.circuits if c.diggerId == d.name), None)
+                req = circuit_obj.optimalTruckCount if circuit_obj else 4
                 if req <= 0: req = 1
                 effective_trucks = min(active_trucks_in_circuit, req) + (max(0, active_trucks_in_circuit - req) * 0.2)
                 
@@ -986,7 +1010,7 @@ class ReviewStepWidget(QWidget):
             f"🚜 Operational Equipment ({len(active_machines)} machines)",
             "#0284c7"
         )
-        sec1_layout = QVBoxLayout(sec1)
+        sec1_layout = sec1.layout()
         sec1_layout.setContentsMargins(12, 10, 12, 10)
         sec1_layout.setSpacing(6)
         
@@ -1014,7 +1038,7 @@ class ReviewStepWidget(QWidget):
             f"⏳ Standby Relief Crew / Hot Seat Queue ({len(standby_ops)} operators)",
             "#d97706"
         )
-        sec2_layout = QVBoxLayout(sec2)
+        sec2_layout = sec2.layout()
         sec2_layout.setContentsMargins(12, 10, 12, 10)
         sec2_layout.setSpacing(6)
         
@@ -1034,7 +1058,7 @@ class ReviewStepWidget(QWidget):
                 f"⊘ Parked / Not Required Equipment ({len(not_required_machines)} machines)",
                 "#475569"
             )
-            sec3_layout = QVBoxLayout(sec3)
+            sec3_layout = sec3.layout()
             sec3_layout.setContentsMargins(12, 10, 12, 10)
             sec3_layout.setSpacing(4)
             for m in not_required_machines:
@@ -1050,7 +1074,7 @@ class ReviewStepWidget(QWidget):
                 f"🏖 Absent / On Leave Today ({len(absent_ops)} operators)",
                 "#7c3aed"
             )
-            sec4_layout = QVBoxLayout(sec4)
+            sec4_layout = sec4.layout()
             sec4_layout.setContentsMargins(12, 10, 12, 10)
             sec4_layout.setSpacing(4)
             for op in absent_ops:
@@ -1102,6 +1126,17 @@ class AllocationWizardDialog(QDialog):
                 assigned_so_far.add(m.currentOperatorId)
             else:
                 self.allocations[m.name] = None
+
+        # Ensure every digger has a Circuit so UI can safely assign trucks
+        from core.models import Circuit
+        for m in self.state_manager.state.machines:
+            if is_digger(m.type):
+                existing_circuit = next((c for c in self.state_manager.state.circuits if c.diggerId == m.name), None)
+                if not existing_circuit:
+                    c_id = f"C-{m.name}"
+                    # Use the digger name as the circuit name so the combobox matches nicely
+                    new_circuit = Circuit(id=c_id, name=m.name, zoneId=m.zoneId, diggerId=m.name, truckIds=[], optimalTruckCount=4)
+                    self.state_manager.state.circuits.append(new_circuit)
 
         self.setStyleSheet("""
             QDialog { background-color: #0f172a; color: white; }

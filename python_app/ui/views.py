@@ -155,8 +155,10 @@ class MachineRowWidget(QFrame):
             """)
             
         segments = self.state_manager.get_machine_segments(self.machine.name)
+        circadian_window = self.state_manager.get_circadian_window()
+        locked_horizon = self.state_manager.get_locked_horizon()
         self.timeline_track.set_pending_swap(pending_swap)
-        self.timeline_track.set_segments(segments, self.state_manager.get_current_time())
+        self.timeline_track.set_segments(segments, self.state_manager.get_current_time(), circadian_window, locked_horizon)
 
     def on_activate(self):
         self.state_manager.set_machine_status(self.machine.name, 'operational')
@@ -318,7 +320,7 @@ class ZoneSectionWidget(QFrame):
             self.ruler = TimelineRulerWidget()
             if self.state_manager:
                 self.ruler.set_current_time(self.state_manager.get_current_time())
-                self.state_manager.time_ticked.connect(lambda: self.ruler.set_current_time(self.state_manager.get_current_time()))
+                self.state_manager.time_ticked.connect(self.update_ruler_time)
             ruler_row_layout.addWidget(self.ruler, 1)
             
             layout.addWidget(ruler_row)
@@ -338,6 +340,10 @@ class ZoneSectionWidget(QFrame):
             """)
             placeholder.setAlignment(Qt.AlignCenter)
             layout.addWidget(placeholder)
+
+    def update_ruler_time(self):
+        if self.state_manager and hasattr(self, 'ruler') and self.ruler:
+            self.ruler.set_current_time(self.state_manager.get_current_time())
 
     def dragEnterEvent(self, event):
         if event.mimeData().hasText() and event.mimeData().text().startswith("MACHINE:"):
@@ -405,6 +411,7 @@ class BaseListView(QScrollArea):
             item = self.layout.takeAt(0)
             widget = item.widget()
             if widget:
+                widget.hide()
                 widget.setParent(None)
                 widget.deleteLater()
 
@@ -464,6 +471,9 @@ class EquipmentCategoryWidget(QFrame):
     """
     def __init__(self, cat_title, machines, state_manager, parent=None):
         super().__init__(parent)
+        self.cat_title = cat_title
+        self.machines = machines
+        self.state_manager = state_manager
         self.setStyleSheet("""
             EquipmentCategoryWidget {
                 background-color: #0f172a;
@@ -500,12 +510,16 @@ class EquipmentCategoryWidget(QFrame):
         
         self.ruler = TimelineRulerWidget()
         self.ruler.set_current_time(state_manager.get_current_time())
-        state_manager.time_ticked.connect(lambda: self.ruler.set_current_time(state_manager.get_current_time()))
+        state_manager.time_ticked.connect(self.update_ruler_time)
         ruler_row_layout.addWidget(self.ruler, 1)
         layout.addWidget(ruler_row)
         
         for m in machines:
             layout.addWidget(MachineRowWidget(m, state_manager))
+
+    def update_ruler_time(self):
+        if self.state_manager and hasattr(self, 'ruler') and self.ruler:
+            self.ruler.set_current_time(self.state_manager.get_current_time())
 
 
 class EquipmentView(BaseListView):
@@ -665,7 +679,9 @@ class OperatorRowWidget(QFrame):
             self.setToolTip(f"👷 {self.operator.name} (Absent today)")
 
         segments = self.state_manager.get_operator_segments(self.operator.name)
-        self.timeline_track.set_segments(segments, self.state_manager.get_current_time())
+        circadian_window = self.state_manager.get_circadian_window()
+        locked_horizon = self.state_manager.get_locked_horizon()
+        self.timeline_track.set_segments(segments, self.state_manager.get_current_time(), circadian_window, locked_horizon)
 
 
 # For backward compatibility
@@ -673,6 +689,15 @@ OperatorTimelineWidget = OperatorRowWidget
 
 
 class OperatorsView(BaseListView):
+    def __init__(self, state_manager, parent=None):
+        super().__init__(state_manager, parent)
+        self.ruler = None
+        self.state_manager.time_ticked.connect(self.update_ruler_time)
+
+    def update_ruler_time(self):
+        if hasattr(self, 'ruler') and self.ruler:
+            self.ruler.set_current_time(self.state_manager.get_current_time())
+
     def update_view(self):
         if QApplication.mouseButtons() != Qt.NoButton:
             QTimer.singleShot(100, self.update_view)
@@ -739,7 +764,6 @@ class OperatorsView(BaseListView):
 
         self.ruler = TimelineRulerWidget()
         self.ruler.set_current_time(self.state_manager.get_current_time())
-        self.state_manager.time_ticked.connect(lambda: self.ruler.set_current_time(self.state_manager.get_current_time()))
         ruler_row_layout.addWidget(self.ruler, 1)
         board_layout.addWidget(ruler_row)
 

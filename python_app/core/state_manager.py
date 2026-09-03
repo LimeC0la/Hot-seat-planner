@@ -5,8 +5,15 @@ from datetime import datetime, timedelta
 from PySide6.QtCore import QObject, Signal, QTimer
 from PySide6.QtGui import QColor
 import dateutil.parser
-from .models import Operator, Machine, Zone, ZoneConnection, Assignment, Break, AppState, Settings, PlannedSegment
+from .models import (
+    Operator, Machine, Zone, ZoneConnection, Assignment, Break,
+    AppState, Settings, PlannedSegment, ProductionTask,
+    OperatorStatus, MachineStatus, CURRENT_SCHEMA_VERSION
+)
 from .planner import ReliefPlanner, get_shift_bounds
+from .solver import SolverPlanner
+from .reactive_engine import ReactiveEngine
+from .telemetry import TelemetryLogger, ScheduleEvent
 
 def merge_intervals(intervals):
     if not intervals:
@@ -46,7 +53,16 @@ class StateManager(QObject):
         super().__init__()
         self.data_file = data_file
         self.state = AppState()
+        
+        # Phase 3, 4, 6: New Engines
+        self.solver_planner = SolverPlanner(self.state)
         self.planner = ReliefPlanner(self.state)
+        self.reactive_engine = ReactiveEngine()
+        self.telemetry = TelemetryLogger()
+        
+        # Phase 5: Production Queue
+        from .production_queue import ProductionQueue
+        self.production_queue = ProductionQueue()
         
         # Simulation clock controls: default to 07:00 of today, 1 min/sec (60x)
         now = datetime.now()
@@ -68,7 +84,10 @@ class StateManager(QObject):
         self.auto_accept_swaps = bool(enabled)
         if self.auto_accept_swaps:
             # Immediately trigger any due swaps
-            self.check_and_auto_execute_swaps()
+            if self.check_and_auto_execute_swaps(batch_mode=True):
+                self.save_state()
+                self.recompute_plan()
+                self.state_changed.emit()
 
     def get_current_time(self) -> datetime:
         return self.simulated_time
@@ -89,6 +108,8 @@ class StateManager(QObject):
         for op in self.state.operators:
             op.breaksTaken = 0
             op.standbyTimeMinutes = 0
+            op.cumulativeFatigueMinutes = 0.0
+            op.alertnessScore = 1.0
             if op.status == 'on_break':
                 op.status = 'standby'
             op.currentAssignmentId = None
@@ -116,20 +137,34 @@ class StateManager(QObject):
         self.speed_multiplier = max(0.1, float(multiplier))
         self.time_ticked.emit()
 
+    @staticmethod
+    def _safe_construct(cls, data_dict: dict):
+        """Construct a dataclass instance, silently dropping unknown keys.
+        This lets old state.json files (missing new fields) load with defaults,
+        and prevents crashes if a key was removed in a newer schema."""
+        import dataclasses
+        known_fields = {f.name for f in dataclasses.fields(cls)}
+        filtered = {k: v for k, v in data_dict.items() if k in known_fields}
+        return cls(**filtered)
+
     def load_state(self):
         if os.path.exists(self.data_file):
             try:
                 with open(self.data_file, 'r') as f:
                     data = json.load(f)
                 
-                self.state.operators = [Operator(**op) for op in data.get('operators', [])]
-                self.state.machines = [Machine(**m) for m in data.get('machines', [])]
-                self.state.zones = [Zone(**z) for z in data.get('zones', [])]
-                self.state.zoneConnections = [ZoneConnection(**zc) for zc in data.get('zoneConnections', [])]
-                self.state.assignments = [Assignment(**a) for a in data.get('assignments', [])]
-                self.state.breaks = [Break(**b) for b in data.get('breaks', [])]
+                self.state.schemaVersion = data.get('schemaVersion', 1)
+                self.state.operators = [self._safe_construct(Operator, op) for op in data.get('operators', [])]
+                self.state.machines = [self._safe_construct(Machine, m) for m in data.get('machines', [])]
+                self.state.zones = [self._safe_construct(Zone, z) for z in data.get('zones', [])]
+                self.state.zoneConnections = [self._safe_construct(ZoneConnection, zc) for zc in data.get('zoneConnections', [])]
+                from .models import Circuit
+                self.state.circuits = [self._safe_construct(Circuit, c) for c in data.get('circuits', [])]
+                self.state.assignments = [self._safe_construct(Assignment, a) for a in data.get('assignments', [])]
+                self.state.breaks = [self._safe_construct(Break, b) for b in data.get('breaks', [])]
+                self.state.productionTasks = [self._safe_construct(ProductionTask, t) for t in data.get('productionTasks', [])]
                 if 'settings' in data:
-                    self.state.settings = Settings(**data['settings'])
+                    self.state.settings = self._safe_construct(Settings, data['settings'])
                 
                 if 'simulatedTime' in data and data['simulatedTime']:
                     try:
@@ -164,6 +199,20 @@ class StateManager(QObject):
                     if b.operatorId in op_id_to_name:
                         b.operatorId = op_id_to_name[b.operatorId]
                 
+                # Migrate Schema Version 2 -> 3 (Create Circuits)
+                if self.state.schemaVersion < 3:
+                    circuit_map = {}
+                    for m in data.get('machines', []):
+                        grp = m.get('circuitGroup')
+                        if grp:
+                            if grp not in circuit_map:
+                                circuit_map[grp] = {'id': grp, 'name': grp, 'diggerId': grp, 'truckIds': [], 'zoneId': m.get('zoneId', '')}
+                            if m.get('type') == 'Truck':
+                                circuit_map[grp]['truckIds'].append(m.get('name'))
+                    for c_data in circuit_map.values():
+                        self.state.circuits.append(self._safe_construct(Circuit, c_data))
+                    self.state.schemaVersion = CURRENT_SCHEMA_VERSION
+
                 # Sanitize legacy / expired open breaks
                 break_dur = timedelta(minutes=self.state.settings.breakDurationMinutes)
                 for b in self.state.breaks:
@@ -185,6 +234,7 @@ class StateManager(QObject):
             except Exception as e:
                 print(f"Error loading state: {e}. Falling back to default data.")
 
+        from .models import Circuit
         # Fallback / Seed data
         self.state.operators = [
             Operator(name='Alice Smith', qualifications=['Truck', 'Water Cart']),
@@ -197,9 +247,12 @@ class StateManager(QObject):
             Zone(name='South Pit'),
         ]
         self.state.machines = [
-            Machine(name='DT-101', type='Truck', zoneId='North Pit', transitTimeMinutes=10),
-            Machine(name='DT-102', type='Truck', zoneId='North Pit', transitTimeMinutes=10),
+            Machine(name='DT-101', type='Truck', zoneId='South Pit', transitTimeMinutes=10),
+            Machine(name='DT-102', type='Truck', zoneId='South Pit', transitTimeMinutes=10),
             Machine(name='EX-201', type='Digger', zoneId='South Pit', transitTimeMinutes=15),
+        ]
+        self.state.circuits = [
+            Circuit(id='C-EX-201', name='C-EX-201', zoneId='South Pit', diggerId='EX-201', truckIds=['DT-101', 'DT-102'])
         ]
         self.state.settings = Settings()
         self.state.simulatedTime = self.simulated_time.isoformat()
@@ -207,17 +260,21 @@ class StateManager(QObject):
 
     def save_state(self):
         data = {
+            'schemaVersion': CURRENT_SCHEMA_VERSION,
             'operators': [op.__dict__ for op in self.state.operators],
             'machines': [m.__dict__ for m in self.state.machines],
             'zones': [z.__dict__ for z in self.state.zones],
             'zoneConnections': [zc.__dict__ for zc in self.state.zoneConnections],
+            'circuits': [c.__dict__ for c in self.state.circuits],
             'assignments': [a.__dict__ for a in self.state.assignments],
             'breaks': [b.__dict__ for b in self.state.breaks],
+            'productionTasks': [t.__dict__ for t in self.state.productionTasks],
             'settings': self.state.settings.__dict__,
             'simulatedTime': self.state.simulatedTime,
         }
         with open(self.data_file, 'w') as f:
             json.dump(data, f, indent=2)
+
 
     def tick(self):
         if self.is_paused:
@@ -228,27 +285,66 @@ class StateManager(QObject):
         self.simulated_time += timedelta(seconds=step_sim_seconds)
         self.state.simulatedTime = self.simulated_time.isoformat()
 
-        # Update standby times for operators on standby
+        step_sim_minutes = step_sim_seconds / 60.0
+        settings = self.state.settings
+        max_work_mins = max(1.0, float(settings.defaultOperatingTimeMinutes))
+
+        breaks_ended = False
+        # Update standby times and fatigue for operators
         for op in self.state.operators:
             if op.status == 'standby':
-                op.standbyTimeMinutes = int(op.standbyTimeMinutes + (step_sim_seconds / 60.0))
+                op.standbyTimeMinutes = int(op.standbyTimeMinutes + step_sim_minutes)
+            elif op.status == 'working':
+                # ── Fatigue accumulation (§4.2) ──
+                op.cumulativeFatigueMinutes += step_sim_minutes * settings.fatigueAccumulationRate
+                # Alertness degrades linearly from 1.0 toward 0.0 as fatigue approaches max
+                op.alertnessScore = max(0.0, 1.0 - (op.cumulativeFatigueMinutes / max_work_mins))
             elif op.status == 'on_break':
+                # ── Fatigue recovery (§4.2) ──
+                op.cumulativeFatigueMinutes = max(
+                    0.0,
+                    op.cumulativeFatigueMinutes - step_sim_minutes * settings.fatigueRecoveryRate
+                )
+                op.alertnessScore = max(0.0, 1.0 - (op.cumulativeFatigueMinutes / max_work_mins))
+
                 # Check if simulated break is finished
                 active_break = next((b for b in reversed(self.state.breaks) if b.operatorId == op.name and not b.endTime), None)
                 if active_break:
                     try:
                         b_start = dateutil.parser.isoparse(active_break.startTime)
                         elapsed_break_sec = (self.simulated_time - b_start).total_seconds()
-                        req_break_sec = self.state.settings.breakDurationMinutes * 60.0
+                        req_break_sec = settings.breakDurationMinutes * 60.0
                         if elapsed_break_sec >= req_break_sec:
-                            self._end_break(op.name, active_break.id)
+                            self._end_break(op.name, active_break.id, notify=False, save=False, recompute=False)
+                            breaks_ended = True
                     except Exception:
                         pass
 
-        # Check and auto execute any due swaps if auto-accept is enabled
-        if self.auto_accept_swaps:
-            self.check_and_auto_execute_swaps()
 
+        # Check and auto execute any due swaps if auto-accept is enabled
+        swaps_executed = False
+        if self.auto_accept_swaps:
+            swaps_executed = self.check_and_auto_execute_swaps(batch_mode=True)
+
+        if breaks_ended or swaps_executed:
+            self.save_state()
+            self.state_changed.emit()
+
+        # Phase 4: Reactive Engine Disruption Detection
+        disruptions = self.reactive_engine.detect_disruptions(self.state, self.simulated_time)
+        needs_replan = self.reactive_engine.should_replan(disruptions)
+        
+        for d in disruptions:
+            self.telemetry.log_event(ScheduleEvent(
+                timestamp=self.simulated_time.isoformat(),
+                event_type="DISRUPTION_DETECTED",
+                operator_name=d.affected_entity if d.type in ("operator_absent", "fatigue_alert") else "",
+                machine_name=d.affected_entity if d.type == "machine_down" else "",
+                details={"severity": d.severity, "description": d.description}
+            ))
+
+        # Always recompute plan on tick so timeline updates dynamically, 
+        # but in a real reactive system we'd use `needs_replan` to trigger the rolling horizon.
         self.recompute_plan()
         self.time_ticked.emit()
 
@@ -324,6 +420,8 @@ class StateManager(QObject):
             for op in self.state.operators:
                 op.breaksTaken = 0
                 op.standbyTimeMinutes = 0
+                op.cumulativeFatigueMinutes = 0.0
+                op.alertnessScore = 1.0
                 op.currentAssignmentId = None
                 op.status = 'standby'
             for m in self.state.machines:
@@ -385,7 +483,7 @@ class StateManager(QObject):
             return True
         return False
 
-    def assign_operator(self, operator_id: str, machine_id: str):
+    def assign_operator(self, operator_id: str, machine_id: str, notify: bool = True, save: bool = True, recompute: bool = True):
         op = next((o for o in self.state.operators if o.id == operator_id or o.name == operator_id), None)
         machine = next((m for m in self.state.machines if m.id == machine_id or m.name == machine_id), None)
         
@@ -432,12 +530,15 @@ class StateManager(QObject):
         )
         self.state.assignments.append(new_assignment)
         
-        self.save_state()
-        self.recompute_plan()
-        self.state_changed.emit()
+        if save:
+            self.save_state()
+        if recompute:
+            self.recompute_plan()
+        if notify:
+            self.state_changed.emit()
         return True
 
-    def send_on_break(self, operator_id: str):
+    def send_on_break(self, operator_id: str, notify: bool = True, save: bool = True, recompute: bool = True):
         op = next((o for o in self.state.operators if o.id == operator_id or o.name == operator_id), None)
         if not op:
             return
@@ -463,9 +564,12 @@ class StateManager(QObject):
         )
         self.state.breaks.append(new_break)
         
-        self.save_state()
-        self.recompute_plan()
-        self.state_changed.emit()
+        if save:
+            self.save_state()
+        if recompute:
+            self.recompute_plan()
+        if notify:
+            self.state_changed.emit()
 
     def get_pending_swap_for_machine(self, machine_name: str) -> Optional[Dict]:
         """Check if machine has a planned swap / relief / break pending confirmation at current time."""
@@ -569,7 +673,7 @@ class StateManager(QObject):
 
         return None
 
-    def execute_pending_swap(self, machine_name: str) -> bool:
+    def execute_pending_swap(self, machine_name: str, notify: bool = True, save: bool = True, recompute: bool = True) -> bool:
         """Execute the pending swap/break transition for a machine."""
         swap = self.get_pending_swap_for_machine(machine_name)
         if not swap:
@@ -581,29 +685,44 @@ class StateManager(QObject):
 
         if swap_type == 'relief_swap':
             if outgoing_op:
-                self.send_on_break(outgoing_op)
+                self.send_on_break(outgoing_op, notify=False, save=False, recompute=False)
             if incoming_op:
-                self.assign_operator(incoming_op, machine_name)
+                self.assign_operator(incoming_op, machine_name, notify=False, save=False, recompute=False)
         elif swap_type == 'send_break':
             if outgoing_op:
-                self.send_on_break(outgoing_op)
+                self.send_on_break(outgoing_op, notify=False, save=False, recompute=False)
         elif swap_type in ('operator_swap', 'assign_operator'):
             if incoming_op:
-                self.assign_operator(incoming_op, machine_name)
+                self.assign_operator(incoming_op, machine_name, notify=False, save=False, recompute=False)
+
+        if save:
+            self.save_state()
+        if recompute:
+            self.recompute_plan()
+        if notify:
+            self.state_changed.emit()
 
         return True
 
-    def check_and_auto_execute_swaps(self):
-        """Check all machines and standby operators for due swaps/breaks and auto-execute them."""
+    def check_and_auto_execute_swaps(self, batch_mode: bool = False) -> bool:
+        """Check all machines and standby operators for due swaps/breaks and auto-execute them.
+        Returns True if any swap or break was executed."""
         if not self.auto_accept_swaps:
-            return
+            return False
+
+        any_executed = False
 
         # 1. Operational machines pending swaps
         for m in list(self.state.machines):
             if m.status == 'operational':
                 swap = self.get_pending_swap_for_machine(m.name)
                 if swap:
-                    self.execute_pending_swap(m.name)
+                    if batch_mode:
+                        if self.execute_pending_swap(m.name, notify=False, save=False, recompute=False):
+                            any_executed = True
+                    else:
+                        if self.execute_pending_swap(m.name):
+                            any_executed = True
 
         # 2. Standby operators scheduled for break
         now = self.get_current_time()
@@ -615,15 +734,56 @@ class StateManager(QObject):
                             bs_start = dateutil.parser.isoparse(bs.startTime)
                             bs_end = dateutil.parser.isoparse(bs.endTime)
                             if bs_start <= now <= bs_end:
-                                self.send_on_break(op.name)
+                                if batch_mode:
+                                    self.send_on_break(op.name, notify=False, save=False, recompute=False)
+                                else:
+                                    self.send_on_break(op.name)
+                                any_executed = True
                                 break
-                        except Exception:
-                            pass
+                        except Exception as e:
+                            print(f"Error executing swap: {e}")
+
+        return any_executed
+            
+    def get_circadian_window(self) -> Optional[tuple[datetime, datetime]]:
+        """Returns the (start, end) of the circadian window for the current shift, if applicable."""
+        if not self.state.settings.enableCircadianScheduling:
+            return None
+        now = self.get_current_time()
+        shift_start, _ = get_shift_bounds(now)
+        # We can borrow the planner's helper since it's already there
+        # For solver planner we could add it, but it's identical logic so we just use the heuristic planner's helper
+        from .planner import ReliefPlanner
+        return ReliefPlanner._get_circadian_window(shift_start, self.state.settings)
+
+    def get_locked_horizon(self) -> Optional[tuple[datetime, datetime]]:
+        """Returns the (start, end) of the locked horizon where reactive planner shouldn't move segments."""
+        if not self.state.settings.autoPlanEnabled:
+            return None
+        now = self.get_current_time()
+        end = now + timedelta(minutes=self.state.settings.lockedHorizonMinutes)
+        return (now, end)
 
     def recompute_plan(self):
         if self.state.settings.autoPlanEnabled:
-            self.planner.state = self.state
-            self.state.plannedSegments = self.planner.generate_plan(self.get_current_time())
+            now = self.get_current_time()
+            
+            # Phase 3: Use SolverPlanner if enabled, otherwise ReliefPlanner
+            if self.state.settings.useAdvancedSolver:
+                self.solver_planner.state = self.state
+                self.state.plannedSegments = self.solver_planner.generate_plan(now)
+            else:
+                self.planner.state = self.state
+                self.state.plannedSegments = self.planner.generate_plan(now)
+            
+            # Phase 6: Telemetry logging
+            self.telemetry.log_event(ScheduleEvent(
+                timestamp=now.isoformat(),
+                event_type="REPLAN_TRIGGERED",
+                operator_name="SYSTEM",
+                machine_name="SYSTEM",
+                details={"segments_generated": len(self.state.plannedSegments)}
+            ))
         else:
             self.state.plannedSegments = []
 
@@ -740,7 +900,11 @@ class StateManager(QObject):
             'breaks_taken': breaks_taken,
             'status': status,
             'current_machine': current_machine,
-            'standby_minutes': standby_minutes
+            'standby_minutes': standby_minutes,
+            # ── Phase 1: Fatigue stats ──
+            'alertness_score': op.alertnessScore if op else 1.0,
+            'cumulative_fatigue_minutes': op.cumulativeFatigueMinutes if op else 0.0,
+            'competency_multipliers': op.competencyMultipliers if op else {},
         }
 
     def get_operator_segments(self, operator_name: str) -> list:
@@ -850,12 +1014,23 @@ class StateManager(QObject):
                             })
                             planned_busy_intervals.append((start_dt, end_dt))
                         elif p.segmentType == "break":
+                            label = "(Plan) Break"
+                            b_type = getattr(p, 'breakType', 'standard')
+                            if b_type == 'fractionable':
+                                label += f" {getattr(p, 'breakPartIndex', 1)}/{getattr(p, 'breakPartTotal', 1)}"
+                            
+                            color = QColor("#a78bfa") # Violet 400
+                            if b_type == 'circadian':
+                                color = QColor("#c084fc") # Fuchsia 400
+                                label = "Night Break"
+                                
                             segments.append({
                                 'start': start_dt,
                                 'end': end_dt,
-                                'label': "(Plan) Break",
-                                'color': QColor("#a78bfa"), # Violet 400
-                                'is_planned': True
+                                'label': label,
+                                'color': color,
+                                'is_planned': True,
+                                'break_type': b_type
                             })
                             planned_busy_intervals.append((start_dt, end_dt))
                 except Exception:
@@ -886,7 +1061,7 @@ class StateManager(QObject):
         segments.sort(key=lambda s: s['start'])
         return segments
 
-    def _end_break(self, operator_id: str, break_id: str):
+    def _end_break(self, operator_id: str, break_id: str, notify: bool = True, save: bool = True, recompute: bool = True):
         op = next((o for o in self.state.operators if o.id == operator_id or o.name == operator_id), None)
         b = next((b for b in self.state.breaks if b.id == break_id), None)
         if op and op.status == 'on_break':
@@ -894,9 +1069,12 @@ class StateManager(QObject):
         if b:
             b.endTime = self.get_current_time().isoformat()
         
-        self.save_state()
-        self.recompute_plan()
-        self.state_changed.emit()
+        if save:
+            self.save_state()
+        if recompute:
+            self.recompute_plan()
+        if notify:
+            self.state_changed.emit()
 
     def get_travel_time(self, start_zone: str, target_zone: str) -> int:
         if start_zone == target_zone:

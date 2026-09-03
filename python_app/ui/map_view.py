@@ -1,5 +1,5 @@
 import math
-from typing import List, Tuple
+from typing import List, Tuple, Optional
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QGraphicsView, 
     QGraphicsScene, QGraphicsEllipseItem, QGraphicsLineItem, QGraphicsTextItem,
@@ -90,12 +90,14 @@ class ConnectionEditDialog(QDialog):
     def get_data(self):
         new_name = self.name_edit.text().strip()
         conns = []
+        seen_targets = set()
         for i in range(self.conn_table.rowCount()):
             combo = self.conn_table.cellWidget(i, 0)
             spin = self.conn_table.cellWidget(i, 1)
             if combo and spin:
-                target = combo.currentText()
-                if target:
+                target = combo.currentText().strip()
+                if target and target != new_name and target not in seen_targets:
+                    seen_targets.add(target)
                     conns.append(ZoneConnection(new_name, target, spin.value()))
         return new_name, conns
 
@@ -267,15 +269,35 @@ class LocationsMapTab(QWidget):
                 self.edge_items.append(line)
                 line.setZValue(-1)
                 
-    def add_area(self):
-        name, ok = QInputDialog.getText(self, "Add Area", "Area Name:")
-        if ok and name and name not in self.node_items:
-            z = Zone(name=name, id=name, x=150, y=150)
+    def add_area(self, area_name: Optional[str] = None):
+        if not isinstance(area_name, str):
+            name, ok = QInputDialog.getText(self, "Add Area", "Area Name:")
+            if not ok or not name:
+                return
+        else:
+            name = area_name
+            
+        name = name.strip()
+        if name and name not in self.node_items:
+            z = Zone(name=name, id=name, x=150.0, y=150.0)
             self.zones.append(z)
             node = NodeItem(z, self)
             node.setPos(z.x, z.y)
             self.scene.addItem(node)
             self.node_items[name] = node
+            
+            # Auto add a connection to every other node
+            for other_z in self.zones:
+                if other_z.name != name:
+                    exists = any(
+                        (c.zone_a == name and c.zone_b == other_z.name) or
+                        (c.zone_a == other_z.name and c.zone_b == name)
+                        for c in self.connections
+                    )
+                    if not exists:
+                        self.connections.append(ZoneConnection(name, other_z.name, 5))
+                        
+            self.redraw_edges()
             
     def remove_selected(self):
         for item in self.scene.selectedItems():

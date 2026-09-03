@@ -102,10 +102,14 @@ class TimelineTrackWidget(QWidget):
         self.current_time = None
         self.pending_swap = None
         self.pending_swap_rect = None
+        self.circadian_window = None
+        self.locked_horizon = None
         self.setMouseTracking(True)
 
-    def set_segments(self, segments, current_time=None):
+    def set_segments(self, segments, current_time=None, circadian_window=None, locked_horizon=None):
         self.segments = segments
+        self.circadian_window = circadian_window
+        self.locked_horizon = locked_horizon
         if current_time is not None:
             self.current_time = current_time
         self.update()
@@ -139,6 +143,38 @@ class TimelineTrackWidget(QWidget):
         now = self.current_time or datetime.now()
         min_time, max_time = get_shift_bounds(now)
         total_duration = (max_time - min_time).total_seconds()
+        
+        # 1.5 Draw Circadian Window Background (Phase 2)
+        if self.circadian_window:
+            c_start, c_end = self.circadian_window
+            c_start_sec = (max(min_time, c_start) - min_time).total_seconds()
+            c_end_sec = (min(max_time, c_end) - min_time).total_seconds()
+            if c_start_sec < c_end_sec and c_end_sec > 0:
+                cx1 = (c_start_sec / total_duration) * width
+                cx2 = (c_end_sec / total_duration) * width
+                c_rect = QRectF(cx1, track_y + 1, cx2 - cx1, track_h - 2)
+                # Shaded fuchsia/purple for circadian low-point
+                c_color = QColor("#c084fc")
+                c_color.setAlpha(25)
+                painter.setBrush(QBrush(c_color))
+                painter.setPen(Qt.NoPen)
+                painter.drawRect(c_rect)
+        
+        # 1.6 Draw Locked Horizon Background (Phase 4)
+        if self.locked_horizon:
+            l_start, l_end = self.locked_horizon
+            l_start_sec = (max(min_time, l_start) - min_time).total_seconds()
+            l_end_sec = (min(max_time, l_end) - min_time).total_seconds()
+            if l_start_sec < l_end_sec and l_end_sec > 0:
+                lx1 = (l_start_sec / total_duration) * width
+                lx2 = (l_end_sec / total_duration) * width
+                l_rect = QRectF(lx1, track_y + 1, lx2 - lx1, track_h - 2)
+                # Shaded red/orange hatched or subtle overlay
+                l_color = QColor("#ef4444")
+                l_color.setAlpha(15)
+                painter.setBrush(QBrush(l_color, Qt.DiagCrossPattern))
+                painter.setPen(Qt.NoPen)
+                painter.drawRect(l_rect)
         
         # 2. Draw Hour Gridlines through track
         num_hours = 12

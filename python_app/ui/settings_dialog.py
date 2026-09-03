@@ -2,7 +2,8 @@ from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QTabWidget, QWidget,
     QPushButton, QLabel, QLineEdit, QFormLayout, QTableWidget,
     QTableWidgetItem, QHeaderView, QMessageBox, QSpinBox, QCheckBox,
-    QComboBox, QScrollArea, QFrame, QGridLayout, QAbstractItemView
+    QComboBox, QScrollArea, QFrame, QGridLayout, QAbstractItemView,
+    QDoubleSpinBox
 )
 from PySide6.QtCore import Qt
 from typing import List, Optional, Set, Tuple
@@ -134,6 +135,45 @@ class OperatorEditDialog(QDialog):
         quals_box_layout.addLayout(custom_qual_layout)
         layout.addWidget(quals_box)
         
+        # ── Phase 1: Competency Multipliers (§2.1) ──
+        comp_box = QFrame()
+        comp_box.setStyleSheet("background-color: #1e293b; border: 1px solid #334155; border-radius: 6px; padding: 10px;")
+        comp_box_layout = QVBoxLayout(comp_box)
+        comp_box_layout.setSpacing(6)
+        
+        comp_lbl = QLabel("Competency Multipliers (lower = faster/expert):")
+        comp_lbl.setStyleSheet("font-weight: bold; color: #34d399;")
+        comp_box_layout.addWidget(comp_lbl)
+        
+        comp_hint = QLabel("1.0 = baseline · 0.5 = expert · 1.5+ = novice")
+        comp_hint.setStyleSheet("color: #64748b; font-size: 11px; font-style: italic;")
+        comp_box_layout.addWidget(comp_hint)
+        
+        self.competency_spins: dict[str, QDoubleSpinBox] = {}
+        self.comp_grid = QGridLayout()
+        self.comp_grid.setContentsMargins(0, 4, 0, 4)
+        self.comp_grid.setSpacing(8)
+        
+        existing_multipliers = operator.competencyMultipliers if operator else {}
+        for idx, q_name in enumerate(combined_quals):
+            label = QLabel(f"  {q_name}:")
+            label.setStyleSheet("color: #94a3b8; font-size: 12px;")
+            spin = QDoubleSpinBox()
+            spin.setRange(0.5, 2.0)
+            spin.setSingleStep(0.1)
+            spin.setDecimals(1)
+            spin.setValue(existing_multipliers.get(q_name, 1.0))
+            spin.setStyleSheet("background-color: #0f172a; color: white; border: 1px solid #334155; border-radius: 4px; padding: 3px;")
+            spin.setFixedWidth(70)
+            row = idx // 2
+            col = (idx % 2) * 2
+            self.comp_grid.addWidget(label, row, col)
+            self.comp_grid.addWidget(spin, row, col + 1)
+            self.competency_spins[q_name] = spin
+        
+        comp_box_layout.addLayout(self.comp_grid)
+        layout.addWidget(comp_box)
+        
         # Status
         status_layout = QHBoxLayout()
         status_lbl = QLabel("Initial Status:")
@@ -203,6 +243,13 @@ class OperatorEditDialog(QDialog):
         quals = [q_name for q_name, cb in self.qual_checkboxes.items() if cb.isChecked()]
         status = self.status_combo.currentData()
         
+        # Build competency multipliers (only for qualified types, store non-default values)
+        comp_multipliers = {}
+        for q_name in quals:
+            if q_name in self.competency_spins:
+                val = round(self.competency_spins[q_name].value(), 1)
+                comp_multipliers[q_name] = val
+        
         return Operator(
             name=name,
             id=name,
@@ -210,7 +257,12 @@ class OperatorEditDialog(QDialog):
             status=status,
             standbyTimeMinutes=self.operator.standbyTimeMinutes if self.operator else 0,
             breaksTaken=self.operator.breaksTaken if self.operator else 0,
-            currentAssignmentId=self.operator.currentAssignmentId if self.operator else None
+            currentAssignmentId=self.operator.currentAssignmentId if self.operator else None,
+            competencyMultipliers=comp_multipliers,
+            cumulativeFatigueMinutes=self.operator.cumulativeFatigueMinutes if self.operator else 0.0,
+            consecutiveShiftsWorked=self.operator.consecutiveShiftsWorked if self.operator else 0,
+            lastFullRestEnd=self.operator.lastFullRestEnd if self.operator else None,
+            alertnessScore=self.operator.alertnessScore if self.operator else 1.0,
         )
 
 
@@ -426,6 +478,69 @@ class GeneralSettingsTab(QWidget):
         layout.addRow("Padding Minutes:", self.padding_spin)
         layout.addRow("Relief Strategy:", self.even_work_cb)
         layout.addRow("Auto Planning:", self.auto_plan_cb)
+        
+        # ── Phase 1: Handover & Fatigue Settings ──
+        sep_label = QLabel("── Hotseating & Fatigue ──")
+        sep_label.setStyleSheet("color: #38bdf8; font-weight: bold; font-size: 13px; margin-top: 10px;")
+        layout.addRow(sep_label)
+        
+        self.handover_spin = QSpinBox()
+        self.handover_spin.setRange(0, 30)
+        self.handover_spin.setSingleStep(1)
+        self.handover_spin.setValue(settings.handoverDurationMinutes)
+        layout.addRow("Hotseating Handover Duration (mins):", self.handover_spin)
+        
+        self.max_consec_shifts_spin = QSpinBox()
+        self.max_consec_shifts_spin.setRange(1, 14)
+        self.max_consec_shifts_spin.setValue(settings.maxConsecutiveShifts)
+        layout.addRow("Max Consecutive Shifts Before Reset:", self.max_consec_shifts_spin)
+        
+        self.mandatory_reset_spin = QSpinBox()
+        self.mandatory_reset_spin.setRange(12, 96)
+        self.mandatory_reset_spin.setSingleStep(12)
+        self.mandatory_reset_spin.setValue(settings.mandatoryResetHours)
+        layout.addRow("Mandatory Reset Period (hours):", self.mandatory_reset_spin)
+        
+        # ── Phase 2: Advanced Break Scheduling (BAP) ──
+        bap_label = QLabel("── Phase 2: BAP Settings ──")
+        bap_label.setStyleSheet("color: #a78bfa; font-weight: bold; font-size: 13px; margin-top: 10px;")
+        layout.addRow(bap_label)
+
+        self.fractionable_cb = QCheckBox("Enable Fractionable Breaks")
+        self.fractionable_cb.setChecked(settings.enableFractionableBreaks)
+        self.fractionable_parts_spin = QSpinBox()
+        self.fractionable_parts_spin.setRange(2, 4)
+        self.fractionable_parts_spin.setValue(settings.fractionableBreakParts)
+        layout.addRow(self.fractionable_cb, self.fractionable_parts_spin)
+
+        self.variable_cb = QCheckBox("Enable Variable Break Length (Fatigue-based)")
+        self.variable_cb.setChecked(settings.enableVariableBreakLength)
+        layout.addRow(self.variable_cb)
+
+        self.workstretch_spin = QSpinBox()
+        self.workstretch_spin.setRange(60, 480)
+        self.workstretch_spin.setSingleStep(15)
+        self.workstretch_spin.setValue(settings.maxWorkstretchMinutes)
+        layout.addRow("Max Workstretch (hard limit, mins):", self.workstretch_spin)
+
+        self.circadian_cb = QCheckBox("Enable Circadian Low-Point Breaks")
+        self.circadian_cb.setChecked(settings.enableCircadianScheduling)
+        layout.addRow(self.circadian_cb)
+
+        # ── Phase 3 & 4: Advanced Engines ──
+        engine_label = QLabel("── Phase 3 & 4: Scheduling Engines ──")
+        engine_label.setStyleSheet("color: #38bdf8; font-weight: bold; font-size: 13px; margin-top: 10px;")
+        layout.addRow(engine_label)
+
+        self.solver_cb = QCheckBox("Use Advanced Optimizer (OR-Tools CP-SAT) if available")
+        self.solver_cb.setChecked(settings.useAdvancedSolver)
+        layout.addRow(self.solver_cb)
+
+        self.locked_horizon_spin = QSpinBox()
+        self.locked_horizon_spin.setRange(0, 120)
+        self.locked_horizon_spin.setSingleStep(5)
+        self.locked_horizon_spin.setValue(settings.lockedHorizonMinutes)
+        layout.addRow("Locked Horizon for Replanning (mins):", self.locked_horizon_spin)
 
 
 
@@ -764,6 +879,19 @@ class SettingsDialog(QDialog):
         settings.paddingMinutes = self.general_tab.padding_spin.value()
         settings.preferEvenWorkTime = self.general_tab.even_work_cb.isChecked()
         settings.autoPlanEnabled = self.general_tab.auto_plan_cb.isChecked()
+        # Phase 1: Handover & Fatigue
+        settings.handoverDurationMinutes = self.general_tab.handover_spin.value()
+        settings.maxConsecutiveShifts = self.general_tab.max_consec_shifts_spin.value()
+        settings.mandatoryResetHours = self.general_tab.mandatory_reset_spin.value()
+        # Phase 2: BAP Settings
+        settings.enableFractionableBreaks = self.general_tab.fractionable_cb.isChecked()
+        settings.fractionableBreakParts = self.general_tab.fractionable_parts_spin.value()
+        settings.enableVariableBreakLength = self.general_tab.variable_cb.isChecked()
+        settings.maxWorkstretchMinutes = self.general_tab.workstretch_spin.value()
+        settings.enableCircadianScheduling = self.general_tab.circadian_cb.isChecked()
+        # Phase 3 & 4
+        settings.useAdvancedSolver = self.general_tab.solver_cb.isChecked()
+        settings.lockedHorizonMinutes = self.general_tab.locked_horizon_spin.value()
         
         zones, connections = self.locations_tab.get_data()
         self.state_manager.state.zones = zones
@@ -780,6 +908,11 @@ class SettingsDialog(QDialog):
                 op.standbyTimeMinutes = old.standbyTimeMinutes
                 op.breaksTaken = old.breaksTaken
                 op.currentAssignmentId = old.currentAssignmentId
+                # Preserve runtime fatigue state
+                op.cumulativeFatigueMinutes = old.cumulativeFatigueMinutes
+                op.alertnessScore = old.alertnessScore
+                op.consecutiveShiftsWorked = old.consecutiveShiftsWorked
+                op.lastFullRestEnd = old.lastFullRestEnd
         self.state_manager.state.operators = new_ops
         
         # Save machines

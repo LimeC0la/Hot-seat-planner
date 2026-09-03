@@ -1,14 +1,16 @@
 import sys
 import os
 
-# Ensure dateutil is available
-try:
-    import dateutil.parser
-except ImportError:
-    print("Installing python-dateutil...")
-    import subprocess
-    subprocess.check_call([sys.executable, "-m", "pip", "install", "python-dateutil"])
-    import dateutil.parser
+# Ensure required packages are available
+for module_name, pip_name in [("dateutil", "python-dateutil"), ("PySide6", "PySide6")]:
+    try:
+        __import__(module_name)
+    except ImportError:
+        print(f"Required package '{module_name}' not found. Installing {pip_name}...")
+        try:
+            subprocess.check_call([sys.executable, "-m", "pip", "install", pip_name])
+        except Exception as e:
+            print(f"Error installing {pip_name}: {e}")
 
 from PySide6.QtWidgets import QApplication
 from core.state_manager import StateManager
