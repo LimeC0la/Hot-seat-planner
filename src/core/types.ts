@@ -25,6 +25,8 @@ export interface Machine {
   currentOperatorId: string | null;
   status: MachineStatus;
   priority: number;
+  dozerRole?: 'pit' | 'dump';
+  operationalShell?: 'circuit_leader' | 'circuit_truck' | 'bench_support' | 'pit_service';
 }
 
 export interface Zone {
@@ -49,6 +51,25 @@ export interface Circuit {
   truckIds: string[];
   dozerId: string | null;
   optimalTruckCount: number;
+  pitDozerId?: string | null;
+  dumpDozerId?: string | null;
+  shutdownMode?: 'simultaneous' | 'staggered';
+  staggerOffsetMinutes?: number;
+}
+
+export interface ManualReliefLock {
+  id: string;
+  machineName: string;
+  reliefOperatorName: string;
+  startTime: string;
+  endTime: string;
+  locked: boolean;
+}
+
+export interface AreaShutdownConfig {
+  zoneId: string;
+  mode: 'simultaneous' | 'staggered';
+  staggerMinutes: number;
 }
 
 export interface Assignment {
@@ -73,6 +94,8 @@ export interface PlannedSegment {
   machineName: string;
   segmentType: 'assignment' | 'break' | 'standby';
   breakType?: 'standard' | 'fractionable' | 'variable' | 'circadian';
+  isCircuitCrib?: boolean;
+  isHotseatRelief?: boolean;
 }
 
 export interface Settings {
@@ -103,4 +126,6 @@ export interface AppState {
   plannedSegments: PlannedSegment[];
   settings: Settings;
   simulatedTime: string;
+  manualReliefs?: ManualReliefLock[];
+  areaShutdownConfigs?: Record<string, AreaShutdownConfig>;
 }

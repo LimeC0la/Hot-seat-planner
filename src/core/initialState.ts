@@ -778,7 +778,8 @@ export const INITIAL_STATE: AppState = {
       "transitTimeMinutes": 0,
       "currentOperatorId": "Zachary T",
       "status": "operational",
-      "priority": 3
+      "priority": 3,
+      "dozerRole": "dump"
     },
     {
       "name": "DZ405",
@@ -788,7 +789,8 @@ export const INITIAL_STATE: AppState = {
       "transitTimeMinutes": 0,
       "currentOperatorId": "Trey C",
       "status": "operational",
-      "priority": 3
+      "priority": 3,
+      "dozerRole": "pit"
     },
     {
       "name": "DZ408",
@@ -798,7 +800,8 @@ export const INITIAL_STATE: AppState = {
       "transitTimeMinutes": 0,
       "currentOperatorId": null,
       "status": "not_required",
-      "priority": 3
+      "priority": 3,
+      "dozerRole": "dump"
     },
     {
       "name": "DZ409",
@@ -808,7 +811,8 @@ export const INITIAL_STATE: AppState = {
       "transitTimeMinutes": 0,
       "currentOperatorId": "Kierin J",
       "status": "operational",
-      "priority": 3
+      "priority": 3,
+      "dozerRole": "pit"
     },
     {
       "name": "DT239",
@@ -1670,5 +1674,28 @@ export const INITIAL_STATE: AppState = {
     "useAdvancedSolver": true,
     "lockedHorizonMinutes": 30
   },
-  "simulatedTime": "2026-08-28T11:09:30"
+  "simulatedTime": "2026-08-28T11:09:30",
+  "manualReliefs": [],
+  "areaShutdownConfigs": {
+    "CN5": {
+      "zoneId": "CN5",
+      "mode": "staggered",
+      "staggerMinutes": 30
+    },
+    "IM9": {
+      "zoneId": "IM9",
+      "mode": "simultaneous",
+      "staggerMinutes": 30
+    },
+    "IM8": {
+      "zoneId": "IM8",
+      "mode": "staggered",
+      "staggerMinutes": 30
+    },
+    "ROM Pad": {
+      "zoneId": "ROM Pad",
+      "mode": "simultaneous",
+      "staggerMinutes": 30
+    }
+  }
 };

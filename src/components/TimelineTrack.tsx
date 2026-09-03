@@ -47,8 +47,12 @@ export const TimelineTrack: React.FC<TimelineTrackProps> = ({
         const isCurrent = segStart <= currentTime && segEnd > currentTime;
 
         let bgStyle = 'bg-sky-600/70 border-sky-400/80 text-sky-100'; // Default assignment
-        if (seg.segmentType === 'break') {
+        if (seg.isCircuitCrib) {
+          bgStyle = 'bg-amber-900/80 border-amber-500/90 text-amber-200 font-bold';
+        } else if (seg.segmentType === 'break') {
           bgStyle = 'bg-purple-600/80 border-purple-400 text-purple-100';
+        } else if (seg.isHotseatRelief) {
+          bgStyle = 'bg-emerald-600/85 border-emerald-400 text-emerald-100 font-semibold shadow';
         } else if (seg.segmentType === 'assignment' && !isPast && !isCurrent) {
           // Projected future plan
           bgStyle = 'bg-sky-950/60 border-sky-600/60 border-dashed text-sky-300';
@@ -62,11 +66,17 @@ export const TimelineTrack: React.FC<TimelineTrackProps> = ({
               left: `${leftPct}%`,
               width: `${widthPct}%`
             }}
-            title={`${seg.operatorName} (${seg.segmentType}): ${segStart.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} - ${segEnd.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`}
+            title={`${seg.operatorName} (${seg.isCircuitCrib ? 'Synchronized Circuit Crib' : seg.isHotseatRelief ? 'Hotseat Relief' : seg.segmentType}): ${segStart.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} - ${segEnd.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`}
           >
             {widthPct > 5 && (
               <span className="truncate">
-                {seg.segmentType === 'break' ? '☕ Break' : formatShortName(seg.operatorName)}
+                {seg.isCircuitCrib
+                  ? '🛑 Crib Park'
+                  : seg.segmentType === 'break'
+                  ? '☕ Break'
+                  : seg.isHotseatRelief
+                  ? `⚡ ${formatShortName(seg.operatorName)}`
+                  : formatShortName(seg.operatorName)}
               </span>
             )}
           </div>

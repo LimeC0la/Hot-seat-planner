@@ -1,4 +1,4 @@
-import type { AppState, PlannedSegment } from './types.ts';
+import type { AppState, PlannedSegment, Machine, Circuit } from './types.ts';
 
 export interface ShiftBounds {
   shiftStart: Date;
@@ -61,6 +61,34 @@ export function formatDuration(totalSeconds: number): string {
   return `${mins}m`;
 }
 
+export function getMachineOperationalShell(
+  machine: Machine,
+  circuits: Circuit[]
+): 'circuit_leader' | 'circuit_truck' | 'bench_support' | 'pit_service' {
+  if (machine.operationalShell) return machine.operationalShell;
+
+  if (circuits.some(c => c.diggerId === machine.name || c.id === machine.name)) {
+    return 'circuit_leader';
+  }
+  if (circuits.some(c => c.truckIds.includes(machine.name))) {
+    return 'circuit_truck';
+  }
+  if (machine.type.toLowerCase().includes('dozer')) {
+    return 'bench_support';
+  }
+  if (machine.type.toLowerCase().includes('grader') || machine.type.toLowerCase().includes('water')) {
+    return 'pit_service';
+  }
+  if (
+    machine.type.toLowerCase().includes('loader') ||
+    machine.type.toLowerCase().includes('excavator') ||
+    machine.type.toLowerCase().includes('digger')
+  ) {
+    return 'circuit_leader';
+  }
+  return 'pit_service';
+}
+
 interface SimOp {
   name: string;
   qualifications: string[];
@@ -71,6 +99,17 @@ interface SimOp {
   availableAt: Date;
   totalMachineSeconds: number;
   currentZone: string;
+}
+
+interface BreakEvent {
+  start: Date;
+  end: Date;
+  operatorName: string;
+  machineName: string;
+  reliefName?: string;
+  isCircuitCrib?: boolean;
+  isHotseatRelief?: boolean;
+  isLocked?: boolean;
 }
 
 export class ReliefPlanner {
@@ -94,7 +133,7 @@ export class ReliefPlanner {
     const breakDurationMs = Math.max(5, settings.breakDurationMinutes) * 60 * 1000;
     const cooldownMs = settings.breakCooldownMinutes * 60 * 1000;
 
-    // 1. Gather historical stats from assignments and breaks
+    // 1. Gather historical break stats
     const breaksByOp: Record<string, number> = {};
     const lastBreakEndByOp: Record<string, Date | null> = {};
     const machineSecondsByOp: Record<string, number> = {};
@@ -163,130 +202,107 @@ export class ReliefPlanner {
       .filter(op => !assignedOpNames.has(op.name))
       .map(op => op.name);
 
-    const plannedSegments: PlannedSegment[] = [];
-
     // Break Window Boundaries
     const breakWindowStart = new Date(shiftStart.getTime() + settings.shiftBreakWindowStartOffsetMinutes * 60 * 1000);
     const breakWindowEnd = new Date(shiftEnd.getTime() - settings.shiftBreakWindowEndOffsetMinutes * 60 * 1000);
-
     const effectiveWindowStart = new Date(Math.max(now.getTime(), breakWindowStart.getTime()));
-
-    // ─────────────────────────────────────────────────────────────
-    // MODE 1: SYNCHRONIZED BREAKS (0 spare operators)
-    // ─────────────────────────────────────────────────────────────
-    if (spareOpNames.length === 0) {
-      const remainingWindowMs = breakWindowEnd.getTime() - effectiveWindowStart.getTime();
-      const numRounds = Math.max(1, settings.targetBreaksPerShift);
-
-      if (remainingWindowMs > numRounds * breakDurationMs) {
-        const intervalMs = remainingWindowMs / (numRounds + 1);
-
-        for (let r = 1; r <= numRounds; r++) {
-          const bStart = new Date(effectiveWindowStart.getTime() + r * intervalMs);
-          const bEnd = new Date(bStart.getTime() + breakDurationMs);
-
-          if (bStart < now) continue;
-
-          // All operators break together
-          for (const op of activeOperators) {
-            plannedSegments.push({
-              startTime: bStart.toISOString(),
-              endTime: bEnd.toISOString(),
-              operatorName: op.name,
-              machineName: '',
-              segmentType: 'break',
-              breakType: 'standard'
-            });
-          }
-        }
-      }
-
-      // Operators stay on machines between breaks
-      for (const m of operationalMachines) {
-        if (!m.currentOperatorId) continue;
-        const opName = m.currentOperatorId;
-
-        const opBreaks = plannedSegments
-          .filter(s => s.operatorName === opName && s.segmentType === 'break')
-          .sort((a, b) => new Date(a.startTime).getTime() - new Date(b.startTime).getTime());
-
-        let cur = now;
-        for (const b of opBreaks) {
-          const bStart = new Date(b.startTime);
-          const bEnd = new Date(b.endTime);
-
-          if (bStart > cur) {
-            plannedSegments.push({
-              startTime: cur.toISOString(),
-              endTime: bStart.toISOString(),
-              operatorName: opName,
-              machineName: m.name,
-              segmentType: 'assignment'
-            });
-          }
-          cur = bEnd;
-        }
-
-        if (cur < shiftEnd) {
-          plannedSegments.push({
-            startTime: cur.toISOString(),
-            endTime: shiftEnd.toISOString(),
-            operatorName: opName,
-            machineName: m.name,
-            segmentType: 'assignment'
-          });
-        }
-      }
-
-      return plannedSegments.sort((a, b) => new Date(a.startTime).getTime() - new Date(b.startTime).getTime());
-    }
-
-    // ─────────────────────────────────────────────────────────────
-    // MODE 2: STAGGERED BREAKS (with spare relief operators)
-    // ─────────────────────────────────────────────────────────────
-    interface BreakEvent {
-      start: Date;
-      end: Date;
-      operatorName: string;
-      machineName: string;
-      reliefName: string;
-    }
 
     const breakEvents: BreakEvent[] = [];
     const spareBusy: { start: Date; end: Date; spareName: string }[] = [];
 
-    // Prioritize machines: Diggers (priority 1) first, then others
-    const sortedMachines = [...operationalMachines].sort((a, b) => a.priority - b.priority);
+    // ─────────────────────────────────────────────────────────────
+    // STEP 1: APPLY MANUAL RELIEF LOCKS (Supervisor Overrides)
+    // ─────────────────────────────────────────────────────────────
+    if (this.state.manualReliefs && this.state.manualReliefs.length > 0) {
+      for (const lock of this.state.manualReliefs) {
+        if (!lock.locked) continue;
+        const targetMach = operationalMachines.find(m => m.name === lock.machineName);
+        if (!targetMach || !targetMach.currentOperatorId) continue;
 
-    for (const m of sortedMachines) {
-      if (!m.currentOperatorId) continue;
-      const primaryOp = m.currentOperatorId;
-      const sim = simOps[primaryOp];
-      if (!sim) continue;
+        try {
+          const lStart = new Date(lock.startTime);
+          const lEnd = new Date(lock.endTime);
+          if (lEnd <= now) continue;
 
-      const neededBreaks = Math.max(0, settings.targetBreaksPerShift - (sim.breaksTaken + sim.plannedBreaksCount));
-      if (neededBreaks <= 0) continue;
+          breakEvents.push({
+            start: lStart,
+            end: lEnd,
+            operatorName: targetMach.currentOperatorId,
+            machineName: targetMach.name,
+            reliefName: lock.reliefOperatorName,
+            isHotseatRelief: true,
+            isLocked: true
+          });
 
-      const remainingTimeMs = breakWindowEnd.getTime() - effectiveWindowStart.getTime();
-      const stepMs = remainingTimeMs / (neededBreaks + 1);
+          spareBusy.push({
+            start: lStart,
+            end: lEnd,
+            spareName: lock.reliefOperatorName
+          });
 
-      for (let i = 1; i <= neededBreaks; i++) {
-        let candidateStart = new Date(effectiveWindowStart.getTime() + i * stepMs);
+          if (simOps[targetMach.currentOperatorId]) {
+            simOps[targetMach.currentOperatorId].plannedBreaksCount++;
+            simOps[targetMach.currentOperatorId].lastBreakEnd = lEnd;
+          }
+        } catch {
+          // ignore parse errors
+        }
+      }
+    }
 
-        // Enforce cooldown from last break
+    // ─────────────────────────────────────────────────────────────
+    // STEP 2: SHELL 1 — DIRECT PRODUCTION CIRCUITS (Digger + Trucks)
+    // ─────────────────────────────────────────────────────────────
+    const circuitsByZone: Record<string, Circuit[]> = {};
+    for (const c of this.state.circuits) {
+      const z = c.zoneId || 'General';
+      if (!circuitsByZone[z]) circuitsByZone[z] = [];
+      circuitsByZone[z].push(c);
+    }
+
+    const midWindowMs = effectiveWindowStart.getTime() + (breakWindowEnd.getTime() - effectiveWindowStart.getTime()) * 0.45;
+
+    for (const [zoneId, zoneCircuits] of Object.entries(circuitsByZone)) {
+      const areaConfig = this.state.areaShutdownConfigs?.[zoneId] || {
+        zoneId,
+        mode: 'staggered',
+        staggerMinutes: 30
+      };
+
+      zoneCircuits.forEach((circuit, circuitIdx) => {
+        const digger = operationalMachines.find(
+          m => m.name === circuit.diggerId || m.name === circuit.id
+        );
+        if (!digger || !digger.currentOperatorId) return;
+
+        const diggerOp = digger.currentOperatorId;
+        const sim = simOps[diggerOp];
+        if (!sim) return;
+
+        const existingLock = breakEvents.find(e => e.machineName === digger.name);
+        if (existingLock) return;
+
+        const neededBreaks = Math.max(0, settings.targetBreaksPerShift - (sim.breaksTaken + sim.plannedBreaksCount));
+        if (neededBreaks <= 0) return;
+
+        const shutdownMode = circuit.shutdownMode || areaConfig.mode || 'staggered';
+        const staggerMinutes = circuit.staggerOffsetMinutes ?? areaConfig.staggerMinutes ?? 30;
+
+        let candidateStart = new Date(midWindowMs);
+        if (shutdownMode === 'staggered') {
+          candidateStart = new Date(midWindowMs + circuitIdx * staggerMinutes * 60 * 1000);
+        }
+
         if (sim.lastBreakEnd) {
           const minAllowed = new Date(sim.lastBreakEnd.getTime() + cooldownMs);
-          if (candidateStart < minAllowed) {
-            candidateStart = minAllowed;
-          }
+          if (candidateStart < minAllowed) candidateStart = minAllowed;
         }
 
         const candidateEnd = new Date(candidateStart.getTime() + breakDurationMs);
-        if (candidateEnd > breakWindowEnd) continue;
+        if (candidateEnd > breakWindowEnd) return;
 
-        // Find available qualified relief spare
         const reliefSpare = this.findReliefSpare(
-          m.type,
+          digger.type,
           spareOpNames,
           simOps,
           spareBusy,
@@ -294,16 +310,22 @@ export class ReliefPlanner {
           candidateEnd
         );
 
+        const assignedTrucks = operationalMachines.filter(
+          m => circuit.truckIds.includes(m.name) && m.currentOperatorId
+        );
+
         if (reliefSpare) {
+          // ── Digger IS HOT-SEATED: Continuous Production ──
           sim.plannedBreaksCount++;
           sim.lastBreakEnd = candidateEnd;
 
           breakEvents.push({
             start: candidateStart,
             end: candidateEnd,
-            operatorName: primaryOp,
-            machineName: m.name,
-            reliefName: reliefSpare
+            operatorName: diggerOp,
+            machineName: digger.name,
+            reliefName: reliefSpare,
+            isHotseatRelief: true
           });
 
           spareBusy.push({
@@ -311,11 +333,262 @@ export class ReliefPlanner {
             end: candidateEnd,
             spareName: reliefSpare
           });
+
+          let truckStaggerIdx = 0;
+          for (const trk of assignedTrucks) {
+            const trkOp = trk.currentOperatorId!;
+            const trkSim = simOps[trkOp];
+            if (!trkSim) continue;
+            if (trkSim.breaksTaken + trkSim.plannedBreaksCount >= settings.targetBreaksPerShift) continue;
+
+            const trkStart = new Date(candidateStart.getTime() + truckStaggerIdx * 15 * 60 * 1000);
+            const trkEnd = new Date(trkStart.getTime() + breakDurationMs);
+            if (trkEnd > breakWindowEnd) continue;
+
+            const trkRelief = this.findReliefSpare(
+              trk.type,
+              spareOpNames,
+              simOps,
+              spareBusy,
+              trkStart,
+              trkEnd
+            );
+
+            if (trkRelief) {
+              trkSim.plannedBreaksCount++;
+              trkSim.lastBreakEnd = trkEnd;
+              breakEvents.push({
+                start: trkStart,
+                end: trkEnd,
+                operatorName: trkOp,
+                machineName: trk.name,
+                reliefName: trkRelief,
+                isHotseatRelief: true
+              });
+              spareBusy.push({ start: trkStart, end: trkEnd, spareName: trkRelief });
+              truckStaggerIdx++;
+            }
+          }
+        } else {
+          // ── Digger CANNOT be hot-seated: CIRCUIT SYNCHRONIZED CRIB ──
+          sim.plannedBreaksCount++;
+          sim.lastBreakEnd = candidateEnd;
+
+          breakEvents.push({
+            start: candidateStart,
+            end: candidateEnd,
+            operatorName: diggerOp,
+            machineName: digger.name,
+            isCircuitCrib: true
+          });
+
+          for (const trk of assignedTrucks) {
+            const trkOp = trk.currentOperatorId!;
+            const trkSim = simOps[trkOp];
+            if (trkSim) {
+              trkSim.plannedBreaksCount++;
+              trkSim.lastBreakEnd = candidateEnd;
+            }
+
+            breakEvents.push({
+              start: candidateStart,
+              end: candidateEnd,
+              operatorName: trkOp,
+              machineName: trk.name,
+              isCircuitCrib: true
+            });
+          }
+        }
+      });
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // STEP 3: SHELL 2 — BENCH & DUMP SUPPORT DOZERS
+    // ─────────────────────────────────────────────────────────────
+    const operationalDozers = operationalMachines.filter(m => m.type.toLowerCase().includes('dozer'));
+
+    for (const dozer of operationalDozers) {
+      if (!dozer.currentOperatorId) continue;
+      if (breakEvents.some(e => e.machineName === dozer.name)) continue;
+
+      const op = dozer.currentOperatorId;
+      const sim = simOps[op];
+      if (!sim) continue;
+      if (sim.breaksTaken + sim.plannedBreaksCount >= settings.targetBreaksPerShift) continue;
+
+      const role = dozer.dozerRole || (dozer.zoneId === 'ROM Pad' ? 'dump' : 'pit');
+
+      if (role === 'pit') {
+        const localDigger = operationalMachines.find(
+          m => m.zoneId === dozer.zoneId && (m.type.toLowerCase().includes('digger') || m.type.toLowerCase().includes('excavator'))
+        );
+        const diggerCrib = localDigger
+          ? breakEvents.find(e => e.machineName === localDigger.name)
+          : null;
+
+        if (diggerCrib) {
+          sim.plannedBreaksCount++;
+          sim.lastBreakEnd = diggerCrib.end;
+          breakEvents.push({
+            start: diggerCrib.start,
+            end: diggerCrib.end,
+            operatorName: op,
+            machineName: dozer.name,
+            isCircuitCrib: diggerCrib.isCircuitCrib
+          });
+        } else {
+          const bStart = new Date(midWindowMs);
+          const bEnd = new Date(bStart.getTime() + breakDurationMs);
+          const relief = this.findReliefSpare(dozer.type, spareOpNames, simOps, spareBusy, bStart, bEnd);
+          sim.plannedBreaksCount++;
+          sim.lastBreakEnd = bEnd;
+          breakEvents.push({
+            start: bStart,
+            end: bEnd,
+            operatorName: op,
+            machineName: dozer.name,
+            reliefName: relief || undefined,
+            isHotseatRelief: Boolean(relief)
+          });
+          if (relief) spareBusy.push({ start: bStart, end: bEnd, spareName: relief });
+        }
+      } else {
+        const bStart = new Date(midWindowMs + 45 * 60 * 1000);
+        const bEnd = new Date(bStart.getTime() + breakDurationMs);
+
+        const relief = this.findReliefSpare(dozer.type, spareOpNames, simOps, spareBusy, bStart, bEnd);
+        if (relief) {
+          sim.plannedBreaksCount++;
+          sim.lastBreakEnd = bEnd;
+          breakEvents.push({
+            start: bStart,
+            end: bEnd,
+            operatorName: op,
+            machineName: dozer.name,
+            reliefName: relief,
+            isHotseatRelief: true
+          });
+          spareBusy.push({ start: bStart, end: bEnd, spareName: relief });
+        } else {
+          const sharedCrib = breakEvents.find(e => e.isCircuitCrib);
+          const targetStart = sharedCrib ? sharedCrib.start : bStart;
+          const targetEnd = sharedCrib ? sharedCrib.end : bEnd;
+
+          sim.plannedBreaksCount++;
+          sim.lastBreakEnd = targetEnd;
+          breakEvents.push({
+            start: targetStart,
+            end: targetEnd,
+            operatorName: op,
+            machineName: dozer.name,
+            isCircuitCrib: Boolean(sharedCrib)
+          });
         }
       }
     }
 
-    // Construct continuous timeline segments for each machine
+    // ─────────────────────────────────────────────────────────────
+    // STEP 4: SHELL 3 — PIT SERVICES (Water Carts & Graders)
+    // ─────────────────────────────────────────────────────────────
+    const waterCarts = operationalMachines.filter(m => m.type.toLowerCase().includes('water'));
+    const graders = operationalMachines.filter(m => m.type.toLowerCase().includes('grader'));
+
+    waterCarts.forEach((wc, idx) => {
+      if (!wc.currentOperatorId) return;
+      if (breakEvents.some(e => e.machineName === wc.name)) return;
+
+      const op = wc.currentOperatorId;
+      const sim = simOps[op];
+      if (!sim) return;
+      if (sim.breaksTaken + sim.plannedBreaksCount >= settings.targetBreaksPerShift) return;
+
+      const wcStart = new Date(effectiveWindowStart.getTime() + (idx * 45 + 30) * 60 * 1000);
+      const wcEnd = new Date(wcStart.getTime() + breakDurationMs);
+      if (wcEnd > breakWindowEnd) return;
+
+      const relief = this.findReliefSpare(wc.type, spareOpNames, simOps, spareBusy, wcStart, wcEnd);
+      sim.plannedBreaksCount++;
+      sim.lastBreakEnd = wcEnd;
+
+      breakEvents.push({
+        start: wcStart,
+        end: wcEnd,
+        operatorName: op,
+        machineName: wc.name,
+        reliefName: relief || undefined,
+        isHotseatRelief: Boolean(relief)
+      });
+      if (relief) spareBusy.push({ start: wcStart, end: wcEnd, spareName: relief });
+    });
+
+    graders.forEach((gr, idx) => {
+      if (!gr.currentOperatorId) return;
+      if (breakEvents.some(e => e.machineName === gr.name)) return;
+
+      const op = gr.currentOperatorId;
+      const sim = simOps[op];
+      if (!sim) return;
+      if (sim.breaksTaken + sim.plannedBreaksCount >= settings.targetBreaksPerShift) return;
+
+      const grStart = new Date(effectiveWindowStart.getTime() + (idx * 60 + 15) * 60 * 1000);
+      const grEnd = new Date(grStart.getTime() + breakDurationMs);
+      if (grEnd > breakWindowEnd) return;
+
+      const relief = this.findReliefSpare(gr.type, spareOpNames, simOps, spareBusy, grStart, grEnd);
+      sim.plannedBreaksCount++;
+      sim.lastBreakEnd = grEnd;
+
+      breakEvents.push({
+        start: grStart,
+        end: grEnd,
+        operatorName: op,
+        machineName: gr.name,
+        reliefName: relief || undefined,
+        isHotseatRelief: Boolean(relief)
+      });
+      if (relief) spareBusy.push({ start: grStart, end: grEnd, spareName: relief });
+    });
+
+    // ─────────────────────────────────────────────────────────────
+    // STEP 5: ANY REMAINING UNPLANNED OPERATIONAL MACHINES
+    // ─────────────────────────────────────────────────────────────
+    for (const m of operationalMachines) {
+      if (!m.currentOperatorId) continue;
+
+      const op = m.currentOperatorId;
+      const sim = simOps[op];
+      if (!sim) continue;
+      const neededBreaks = Math.max(0, settings.targetBreaksPerShift - (sim.breaksTaken + sim.plannedBreaksCount));
+      if (neededBreaks <= 0) continue;
+
+      const remainingTimeMs = breakWindowEnd.getTime() - effectiveWindowStart.getTime();
+      const stepMs = remainingTimeMs / (neededBreaks + 1);
+
+      for (let i = 1; i <= neededBreaks; i++) {
+        const bStart = new Date(effectiveWindowStart.getTime() + i * stepMs);
+        const bEnd = new Date(bStart.getTime() + breakDurationMs);
+        const relief = this.findReliefSpare(m.type, spareOpNames, simOps, spareBusy, bStart, bEnd);
+
+        sim.plannedBreaksCount++;
+        sim.lastBreakEnd = bEnd;
+
+        breakEvents.push({
+          start: bStart,
+          end: bEnd,
+          operatorName: op,
+          machineName: m.name,
+          reliefName: relief || undefined,
+          isHotseatRelief: Boolean(relief)
+        });
+        if (relief) spareBusy.push({ start: bStart, end: bEnd, spareName: relief });
+      }
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // STEP 6: CONSTRUCT TIMELINE SEGMENTS
+    // ─────────────────────────────────────────────────────────────
+    const plannedSegments: PlannedSegment[] = [];
+
     for (const m of operationalMachines) {
       if (!m.currentOperatorId) continue;
       const primaryOp = m.currentOperatorId;
@@ -327,7 +600,6 @@ export class ReliefPlanner {
       let cur = now;
       for (const ev of machEvents) {
         if (ev.start > cur) {
-          // Primary operator on machine
           plannedSegments.push({
             startTime: cur.toISOString(),
             endTime: ev.start.toISOString(),
@@ -337,20 +609,31 @@ export class ReliefPlanner {
           });
         }
 
-        // Relief operator covers machine
-        plannedSegments.push({
-          startTime: ev.start.toISOString(),
-          endTime: ev.end.toISOString(),
-          operatorName: ev.reliefName,
-          machineName: m.name,
-          segmentType: 'assignment'
-        });
+        if (ev.reliefName) {
+          plannedSegments.push({
+            startTime: ev.start.toISOString(),
+            endTime: ev.end.toISOString(),
+            operatorName: ev.reliefName,
+            machineName: m.name,
+            segmentType: 'assignment',
+            isHotseatRelief: true
+          });
+        } else if (ev.isCircuitCrib) {
+          plannedSegments.push({
+            startTime: ev.start.toISOString(),
+            endTime: ev.end.toISOString(),
+            operatorName: primaryOp,
+            machineName: m.name,
+            segmentType: 'break',
+            breakType: 'standard',
+            isCircuitCrib: true
+          });
+        }
 
         cur = ev.end;
       }
 
       if (cur < shiftEnd) {
-        // Primary returns and finishes shift
         plannedSegments.push({
           startTime: cur.toISOString(),
           endTime: shiftEnd.toISOString(),
@@ -361,7 +644,6 @@ export class ReliefPlanner {
       }
     }
 
-    // Add Break segments for operators
     for (const ev of breakEvents) {
       if (ev.end <= now) continue;
       plannedSegments.push({
@@ -370,7 +652,9 @@ export class ReliefPlanner {
         operatorName: ev.operatorName,
         machineName: '',
         segmentType: 'break',
-        breakType: 'standard'
+        breakType: 'standard',
+        isCircuitCrib: ev.isCircuitCrib,
+        isHotseatRelief: ev.isHotseatRelief
       });
     }
 
@@ -389,17 +673,14 @@ export class ReliefPlanner {
       const op = simOps[spareName];
       if (!op) continue;
 
-      // Must be qualified for this machine type
       if (!op.qualifications.includes(machineType) && machineType.toLowerCase() !== 'other') {
         continue;
       }
 
-      // Must be available
       if (op.availableAt > atStart) {
         continue;
       }
 
-      // Must not already be covering another machine
       const isBusy = spareBusy.some(
         b => b.spareName === spareName && !(atEnd.getTime() <= b.start.getTime() || atStart.getTime() >= b.end.getTime())
       );

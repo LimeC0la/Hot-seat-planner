@@ -8,7 +8,7 @@ interface AllocationWizardProps {
 }
 
 export const AllocationWizard: React.FC<AllocationWizardProps> = ({ isOpen, onClose }) => {
-  const { appState, applyDailyAllocation } = useShiftStore();
+  const { appState, applyDailyAllocation, setDozerRole } = useShiftStore();
 
   const [step, setStep] = useState<number>(1);
   const [searchQuery, setSearchQuery] = useState('');
@@ -254,6 +254,25 @@ export const AllocationWizard: React.FC<AllocationWizardProps> = ({ isOpen, onCl
                           ))}
                         </select>
                       </div>
+
+                      {m.type.toLowerCase().includes('dozer') && (
+                        <button
+                          type="button"
+                          onClick={() => setDozerRole(m.name, m.dozerRole === 'dump' ? 'pit' : 'dump')}
+                          className={`px-2 py-1 text-xs font-bold rounded border ${
+                            m.dozerRole === 'dump'
+                              ? 'bg-amber-950 text-amber-300 border-amber-700'
+                              : 'bg-sky-950 text-sky-300 border-sky-700'
+                          }`}
+                          title={
+                            m.dozerRole === 'dump'
+                              ? 'Dump Dozer: continuous tip head operation'
+                              : 'Pit Dozer: shares Light Vehicle to crib with digger'
+                          }
+                        >
+                          {m.dozerRole === 'dump' ? '⛰️ Dump' : '🚜 Pit'}
+                        </button>
+                      )}
 
                       <button
                         onClick={() => {

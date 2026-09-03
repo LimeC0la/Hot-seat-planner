@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
-import { AppState, Assignment, MachineStatus, Settings } from './types';
+import { AppState, Assignment, MachineStatus, Settings, ManualReliefLock } from './types';
 import { INITIAL_STATE } from './initialState';
 import { ReliefPlanner } from './planner';
 
@@ -24,6 +24,21 @@ interface ShiftStore {
   setOperatorAbsent: (operatorId: string, absent: boolean) => void;
   setMachineStatus: (machineId: string, status: MachineStatus) => void;
   relieveOperatorOnMachine: (machineName: string, reliefOpName: string) => void;
+
+  // Machine & Circuit Adjustments
+  adjustCircuitCapacity: (circuitId: string, delta: number) => void;
+  setDozerRole: (machineName: string, role: 'pit' | 'dump') => void;
+  setAreaShutdownMode: (zoneId: string, mode: 'simultaneous' | 'staggered', staggerMinutes?: number) => void;
+  setCircuitShutdownMode: (circuitId: string, mode: 'simultaneous' | 'staggered', offsetMinutes?: number) => void;
+
+  // Manual Relief Locks
+  preassignHotseat: (lock: {
+    machineName: string;
+    reliefOperatorName: string;
+    startTime: string;
+    endTime: string;
+  }) => void;
+  removeHotseatLock: (lockId: string) => void;
 
   // Setup Wizard
   applyDailyAllocation: (params: {
@@ -385,6 +400,79 @@ export const useShiftStore = create<ShiftStore>()(
           }
         });
 
+        get().recomputePlan();
+      },
+
+      adjustCircuitCapacity: (circuitId: string, delta: number) => {
+        const { appState } = get();
+        const circuits = appState.circuits.map(c => {
+          if (c.id === circuitId || c.name === circuitId || c.diggerId === circuitId) {
+            const nextCount = Math.max(0, (c.optimalTruckCount || 0) + delta);
+            return { ...c, optimalTruckCount: nextCount };
+          }
+          return c;
+        });
+        set({ appState: { ...appState, circuits } });
+        get().recomputePlan();
+      },
+
+      setDozerRole: (machineName: string, role: 'pit' | 'dump') => {
+        const { appState } = get();
+        const machines = appState.machines.map(m => {
+          if (m.name === machineName || m.id === machineName) {
+            return { ...m, dozerRole: role };
+          }
+          return m;
+        });
+        set({ appState: { ...appState, machines } });
+        get().recomputePlan();
+      },
+
+      setAreaShutdownMode: (zoneId: string, mode: 'simultaneous' | 'staggered', staggerMinutes: number = 30) => {
+        const { appState } = get();
+        const areaShutdownConfigs = {
+          ...(appState.areaShutdownConfigs || {}),
+          [zoneId]: { zoneId, mode, staggerMinutes }
+        };
+        set({ appState: { ...appState, areaShutdownConfigs } });
+        get().recomputePlan();
+      },
+
+      setCircuitShutdownMode: (circuitId: string, mode: 'simultaneous' | 'staggered', offsetMinutes?: number) => {
+        const { appState } = get();
+        const circuits = appState.circuits.map(c => {
+          if (c.id === circuitId || c.name === circuitId || c.diggerId === circuitId) {
+            return {
+              ...c,
+              shutdownMode: mode,
+              staggerOffsetMinutes: offsetMinutes ?? c.staggerOffsetMinutes ?? 30
+            };
+          }
+          return c;
+        });
+        set({ appState: { ...appState, circuits } });
+        get().recomputePlan();
+      },
+
+      preassignHotseat: (lockData) => {
+        const { appState } = get();
+        const newLock: ManualReliefLock = {
+          id: `lock_${Date.now()}_${lockData.machineName}`,
+          ...lockData,
+          locked: true
+        };
+        const manualReliefs = [
+          ...(appState.manualReliefs || []).filter(l => l.machineName !== lockData.machineName),
+          newLock
+        ];
+        set({ appState: { ...appState, manualReliefs } });
+        get().recomputePlan();
+      },
+
+      removeHotseatLock: (lockId: string) => {
+        const { appState } = get();
+        const manualReliefs = (appState.manualReliefs || []).filter(l => l.id !== lockId);
+        set({ appState: { ...appState, manualReliefs } });
         get().recomputePlan();
       },
 
